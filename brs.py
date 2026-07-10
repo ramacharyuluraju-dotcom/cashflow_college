@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import hashlib
+import calendar
 from datetime import date
 from supabase import create_client, Client
 
@@ -142,35 +143,95 @@ def clerk_dashboard():
     # --- DEPARTMENT DOWNLOAD SECTION ---
     st.markdown("---")
     st.markdown("### 📥 Download Department Reports")
-    st.markdown("Download a CSV file of all transactions recorded on a specific date for departmental filing.")
+    st.markdown("Download a CSV file of transactions for departmental filing.")
     
-    col_dl1, col_dl2 = st.columns([1, 2])
-    with col_dl1:
-        dl_date = st.date_input("Select Date", date.today(), key="dl_date")
-    with col_dl2:
-        st.markdown("<br>", unsafe_allow_html=True) # Spacer to align button
-        if st.button("Fetch Daily Report"):
-            try:
-                res = supabase.table("cash_receipts").select("*").eq("payment_date", str(dl_date)).execute()
-                df = pd.DataFrame(res.data)
+    filter_option = st.selectbox("Select Time Period", ["Today", "Between Dates", "By Month", "Academic Year"])
+    
+    today = date.today()
+    start_date = today
+    end_date = today
+    report_name_suffix = f"{today}"
+    
+    if filter_option == "Today":
+        start_date = today
+        end_date = today
+        report_name_suffix = f"{today}"
+        
+    elif filter_option == "Between Dates":
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            start_date = st.date_input("From Date", today.replace(day=1))
+        with col_d2:
+            end_date = st.date_input("To Date", today)
+        report_name_suffix = f"{start_date}_to_{end_date}"
+            
+    elif filter_option == "By Month":
+        col_m1, col_m2 = st.columns(2)
+        months = list(calendar.month_name)[1:] # ['January', 'February', ...]
+        with col_m1:
+            selected_month = st.selectbox("Month", months, index=today.month - 1)
+        with col_m2:
+            selected_year = st.selectbox("Year", range(today.year + 1, today.year - 5, -1), index=1)
+            
+        month_index = months.index(selected_month) + 1
+        _, last_day = calendar.monthrange(selected_year, month_index)
+        
+        start_date = date(selected_year, month_index, 1)
+        end_date = date(selected_year, month_index, last_day)
+        report_name_suffix = f"{selected_month}_{selected_year}"
+        
+    elif filter_option == "Academic Year":
+        current_year = today.year
+        # If currently before August, the academic year started last year
+        if today.month < 8:
+            default_start_year = current_year - 1
+        else:
+            default_start_year = current_year
+            
+        academic_years = [f"{y}-{y+1}" for y in range(current_year + 1, current_year - 5, -1)]
+        
+        # Safely find the default index
+        default_ay_string = f"{default_start_year}-{default_start_year+1}"
+        default_index = academic_years.index(default_ay_string) if default_ay_string in academic_years else 1
+        
+        selected_ay = st.selectbox("Select Academic Year (Aug-Jul)", academic_years, index=default_index)
+        
+        ay_start_year = int(selected_ay.split("-")[0])
+        ay_end_year = int(selected_ay.split("-")[1])
+        
+        start_date = date(ay_start_year, 8, 1)
+        end_date = date(ay_end_year, 7, 31)
+        report_name_suffix = f"AY_{selected_ay}"
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("Fetch Report"):
+        try:
+            # Query supabase using greater-than-or-equal (gte) and less-than-or-equal (lte)
+            res = supabase.table("cash_receipts") \
+                .select("*") \
+                .gte("payment_date", str(start_date)) \
+                .lte("payment_date", str(end_date)) \
+                .execute()
+            
+            df = pd.DataFrame(res.data)
+            
+            if not df.empty:
+                # Clean up the output dataframe for the department
+                df = df[['payment_date', 'usn', 'student_name', 'branch', 'payment_type', 
+                         'amount', 'utr_number', 'payment_mode', 'college_account', 'entered_by']]
+                csv = df.to_csv(index=False).encode('utf-8')
                 
-                if not df.empty:
-                    # Clean up the output dataframe for the department
-                    df = df[['payment_date', 'usn', 'student_name', 'branch', 'payment_type', 
-                             'amount', 'utr_number', 'payment_mode', 'college_account', 'entered_by']]
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    
-                    st.download_button(
-                        label=f"⬇️ Download {dl_date} Report (CSV)",
-                        data=csv,
-                        file_name=f"Dept_Report_{dl_date}.csv",
-                        mime="text/csv",
-                        type="primary"
-                    )
-                else:
-                    st.info(f"No records found for {dl_date}.")
-            except Exception as e:
-                st.error(f"Failed to fetch report: {e}")
+                st.download_button(
+                    label=f"⬇️ Download Report ({filter_option})",
+                    data=csv,
+                    file_name=f"Dept_Report_{report_name_suffix}.csv",
+                    mime="text/csv",
+                    type="primary"
+                )
+            else:
+                st.info(f"No records found for the selected period.")
+        except Exception as e:
+            st.error(f"Failed to fetch report: {e}")
 
 
 # ==========================================
