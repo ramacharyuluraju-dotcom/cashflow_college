@@ -66,26 +66,42 @@ def clerk_dashboard():
     st.title("📝 Desk Entry: Payment Synchronization")
     st.markdown(f"Logged in as: **{st.session_state.username}** (Clerk)")
     
-    # --- DATA ENTRY FORM ---
-    with st.form("clerk_entry_form"):
-        col1, col2, col3 = st.columns(3)
+    # --- DATA ENTRY SECTION (Removed st.form for dynamic UI support) ---
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("### Student Details")
+        usn = st.text_input("Student USN (e.g., 1AM24CS099)")
+        student_name = st.text_input("Student Name")
+        branch_options = ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"]
+        branch = st.selectbox("Branch", branch_options)
         
-        with col1:
-            st.markdown("### Student Details")
-            usn = st.text_input("Student USN (e.g., 1AM24CS099)")
-            student_name = st.text_input("Student Name")
-            branch_options = ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"]
-            branch = st.selectbox("Branch", branch_options)
-            
-        with col2:
-            st.markdown("### Payment Details")
-            payment_date = st.date_input("Date of Payment", date.today())
-            amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0)
-            
-            payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Lab Dues", "Transport", "Other"])
-            other_description = ""
-            # If 'Other' is selected, show a text input for description (max 20 chars)
-            if payment_type == "Other":
+    with col2:
+        st.markdown("### Payment Details")
+        payment_date = st.date_input("Date of Payment", date.today())
+        amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0)
+        
+        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Other"])
+        other_description = ""
+        # Dynamic box works now because we are no longer inside an st.form wrapper
+        if payment_type == "Other":
+            other_description = st.text_input("Specify Other Fee (Max 12 chars)", max_chars=12)
+        
+    with col3:
+        st.markdown("### Transaction Details")
+        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)"])
+        utr = st.text_input("Transaction ID / UTR No.")
+        
+        # Blank text input for manual account entry
+        college_account = st.text_input("Credited To A/C (Bank details)")
+        
+    st.markdown("---")
+    submitted = st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True)
+    
+    if submitted:
+        # Handle the 'Other' description logic
+        final_payment_type = payment_type
+        if payment_type == "Other":
                 other_description = st.text_input("Specify Other Fee (Max 20 chars)", max_chars=20)
             
         with col3:
@@ -240,7 +256,7 @@ def clerk_dashboard():
 def admin_dashboard():
     st.title("📊 Admin Consolidation & Scrutiny Panel")
     
-    tab1, tab2 = st.tabs(["📥 Download Cash Book", "👥 Manage Users"])
+    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "🔑 Reset Passwords"])
     
     with tab1:
         st.markdown("Filter and export clerk entries for manual scrutiny and external consolidation.")
@@ -302,6 +318,31 @@ def admin_dashboard():
                             st.error("Username already exists.")
                         else:
                             st.error(f"Error: {e}")
+
+    with tab3:
+        st.markdown("Reset passwords for existing users.")
+        try:
+            # Fetch current users from Supabase to populate the dropdown
+            users_res = supabase.table("app_users").select("username").execute()
+            user_list = [u['username'] for u in users_res.data]
+        except Exception as e:
+            user_list = []
+            st.error(f"Could not load users: {e}")
+            
+        with st.form("reset_password_form"):
+            target_user = st.selectbox("Select User", user_list)
+            new_pwd = st.text_input("New Password", type="password")
+            
+            if st.form_submit_button("Update Password"):
+                if target_user and new_pwd:
+                    try:
+                        new_hashed_pwd = hash_password(new_pwd)
+                        supabase.table("app_users").update({"password_hash": new_hashed_pwd}).eq("username", target_user).execute()
+                        st.success(f"✅ Password updated successfully for user '{target_user}'.")
+                    except Exception as e:
+                        st.error(f"❌ Error updating password: {e}")
+                else:
+                    st.warning("⚠️ Please select a user and enter a new password.")
 
 # ==========================================
 # MAIN ROUTING LOGIC
