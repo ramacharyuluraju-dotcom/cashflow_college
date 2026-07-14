@@ -45,9 +45,11 @@ def login_screen():
             submitted = st.form_submit_button("Login", use_container_width=True)
             
             if submitted:
-                hashed_pwd = hash_password(password)
+                # FIX: Force lowercase on username and strip invisible spaces from password
+                clean_username = username.strip().lower()
+                hashed_pwd = hash_password(password.strip())
                 try:
-                    response = supabase.table("app_users").select("*").eq("username", username).eq("password_hash", hashed_pwd).execute()
+                    response = supabase.table("app_users").select("*").eq("username", clean_username).eq("password_hash", hashed_pwd).execute()
                     if len(response.data) > 0:
                         user = response.data[0]
                         st.session_state.logged_in = True
@@ -319,9 +321,15 @@ def admin_dashboard():
             if st.form_submit_button("Update Password"):
                 if target_user and new_pwd:
                     try:
-                        new_hashed_pwd = hash_password(new_pwd)
-                        supabase.table("app_users").update({"password_hash": new_hashed_pwd}).eq("username", target_user).execute()
-                        st.success(f"✅ Password updated successfully for user '{target_user}'.")
+                        # FIX: Strip invisible spaces from the new password before hashing
+                        new_hashed_pwd = hash_password(new_pwd.strip())
+                        res = supabase.table("app_users").update({"password_hash": new_hashed_pwd}).eq("username", target_user).execute()
+                        
+                        # Verify that the update actually succeeded in the database
+                        if hasattr(res, 'data') and len(res.data) > 0:
+                            st.success(f"✅ Password updated successfully for user '{target_user}'.")
+                        else:
+                            st.error(f"❌ Update failed. Please check database permissions.")
                     except Exception as e:
                         st.error(f"❌ Error updating password: {e}")
                 else:
