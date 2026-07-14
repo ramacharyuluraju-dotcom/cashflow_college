@@ -102,59 +102,42 @@ def clerk_dashboard():
         # Handle the 'Other' description logic
         final_payment_type = payment_type
         if payment_type == "Other":
-                other_description = st.text_input("Specify Other Fee (Max 20 chars)", max_chars=20)
-            
-        with col3:
-            st.markdown("### Transaction Details")
-            payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)"])
-            utr = st.text_input("Transaction ID / UTR No.")
-            
-            # Blank text input for manual account entry
-            college_account = st.text_input("Credited To A/C (Bank details)")
-            
-        st.markdown("---")
-        submitted = st.form_submit_button("💾 Save & Sync Receipt", type="primary", use_container_width=True)
-        
-        if submitted:
-            # Handle the 'Other' description logic
-            final_payment_type = payment_type
-            if payment_type == "Other":
-                if not other_description.strip():
-                    st.error("⚠️ Please specify the description for 'Other' fee type.")
-                    return
-                final_payment_type = f"Other - {other_description.strip()}"
+            if not other_description.strip():
+                st.error("⚠️ Please specify the description for 'Other' fee type.")
+                return
+            final_payment_type = f"Other - {other_description.strip()}"
 
-            # Validate Mandatory Fields
-            if not usn or not student_name or not utr or not college_account:
-                st.error("⚠️ USN, Name, UTR, and Account details are mandatory fields!")
-            # Validate UPI (Exactly 12 numeric digits)
-            elif payment_mode == "UPI (QR / App)" and (not utr.isdigit() or len(utr) != 12):
-                st.error("❌ UPI UTR must be exactly 12 numeric digits!")
-            # Validate NEFT/RTGS (Exactly 22 alphanumeric characters)
-            elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not utr.isalnum() or len(utr) != 22):
-                st.error("❌ NEFT/RTGS UTR must be exactly 22 alphanumeric characters!")
-            else:
-                data = {
-                    "payment_date": str(payment_date),
-                    "amount": amount,
-                    "utr_number": utr.strip().upper(),
-                    "payment_type": final_payment_type,
-                    "college_account": college_account.strip(),
-                    "payment_mode": payment_mode,
-                    "usn": usn.strip().upper(),
-                    "student_name": student_name.strip().title(),
-                    "branch": branch,
-                    "entered_by": st.session_state.username
-                }
-                
-                try:
-                    supabase.table("cash_receipts").insert(data).execute()
-                    st.success(f"✅ Receipt for ₹{amount} (UTR: {utr.strip().upper()}) saved successfully!")
-                except Exception as e:
-                    if "duplicate key value" in str(e).lower():
-                        st.error(f"❌ Duplicate Entry! The UTR {utr.strip().upper()} has already been entered in the system.")
-                    else:
-                        st.error(f"Database error: {e}")
+        # Validate Mandatory Fields
+        if not usn or not student_name or not utr or not college_account:
+            st.error("⚠️ USN, Name, UTR, and Account details are mandatory fields!")
+        # Validate UPI (Exactly 12 numeric digits)
+        elif payment_mode == "UPI (QR / App)" and (not utr.isdigit() or len(utr) != 12):
+            st.error("❌ UPI UTR must be exactly 12 numeric digits!")
+        # Validate NEFT/RTGS (Exactly 22 alphanumeric characters)
+        elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not utr.isalnum() or len(utr) != 22):
+            st.error("❌ NEFT/RTGS UTR must be exactly 22 alphanumeric characters!")
+        else:
+            data = {
+                "payment_date": str(payment_date),
+                "amount": amount,
+                "utr_number": utr.strip().upper(),
+                "payment_type": final_payment_type,
+                "college_account": college_account.strip(),
+                "payment_mode": payment_mode,
+                "usn": usn.strip().upper(),
+                "student_name": student_name.strip().title(),
+                "branch": branch,
+                "entered_by": st.session_state.username
+            }
+            
+            try:
+                supabase.table("cash_receipts").insert(data).execute()
+                st.success(f"✅ Receipt for ₹{amount} (UTR: {utr.strip().upper()}) saved successfully!")
+            except Exception as e:
+                if "duplicate key value" in str(e).lower():
+                    st.error(f"❌ Duplicate Entry! The UTR {utr.strip().upper()} has already been entered in the system.")
+                else:
+                    st.error(f"Database error: {e}")
 
     # --- DEPARTMENT DOWNLOAD SECTION ---
     st.markdown("---")
