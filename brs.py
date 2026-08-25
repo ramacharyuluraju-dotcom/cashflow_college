@@ -75,7 +75,7 @@ def clerk_dashboard():
         st.markdown("### Student Details")
         usn = st.text_input("Student USN (e.g., 1AM24CS099)")
         student_name = st.text_input("Student Name")
-        branch_options = ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"]
+        branch_options = ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ME", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"]
         branch = st.selectbox("Branch", branch_options)
         
     with col2:
