@@ -59,6 +59,15 @@ def get_student_photo(usn):
         except: pass
     return None
 
+def get_checkbox():
+    """Generates a perfect square box for the table cells"""
+    t = Table([[""]], colWidths=[12], rowHeights=[12])
+    t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.8, colors.black),
+        ('BACKGROUND', (0,0), (-1,-1), colors.white)
+    ]))
+    return t
+
 def calculate_summer_fees(courses):
     if not courses: return 0
     base_fee = 400
@@ -133,15 +142,20 @@ def generate_summer_pdf(student, courses, total_fee):
         ["USN", "Student Name", "Branch Code", "Student Type", "Photo"],
         [student['usn'], student.get('full_name',''), student.get('branch_code',''), "UG", p_img]
     ]
-    t1 = Table(s_data, colWidths=[80, 195, 75, 75, 100], rowHeights=[20, 75])
-    t1.setStyle(TableStyle([
+    
+    # Building the style list dynamically to prevent empty tuples
+    style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('SPAN', (4, 0), (4, 1)) if not photo_io else ()
-    ]))
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
+    ]
+    if not photo_io:
+        style_cmds.append(('SPAN', (4, 0), (4, 1)))
+
+    t1 = Table(s_data, colWidths=[80, 195, 75, 75, 100], rowHeights=[20, 75])
+    t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
     t1.drawOn(c, margin, y - t1_h)
@@ -157,27 +171,29 @@ def generate_summer_pdf(student, courses, total_fee):
     c.drawString(margin, y, "Summer Subjects Registered")
     y -= 5
 
-    c_data = [["Subject Code", "Subject Name", "Category / Rule", "Fee (Rs)"]]
+    # Tick box column included
+    c_data = [["Subject Code", "Subject Name", "Category / Rule", "Fee (Rs)", "Apply"]]
     for crs in courses:
         fee_str = "5600" if "Rule 1" in crs['rule'] else ("2000/1000" if "Rule 2" in crs['rule'] else "600")
         c_data.append([
             crs['course_code'], 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
             Paragraph(crs['rule'], getSampleStyleSheet()['Normal']), 
-            fee_str
+            fee_str,
+            get_checkbox()
         ])
     
-    # Add fee calculation rows
-    c_data.append(["", "", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "400"])
-    c_data.append(["", "", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), str(total_fee)])
+    c_data.append(["", "", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "400", ""])
+    c_data.append(["", "", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), str(total_fee), ""])
 
-    t2 = Table(c_data, colWidths=[80, 195, 180, 70])
+    t2 = Table(c_data, colWidths=[70, 185, 150, 70, 50])
     t2.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('ALIGN', (0,0), (0,-1), 'CENTER'),
         ('ALIGN', (3,0), (3,-1), 'CENTER'),
+        ('ALIGN', (4,0), (4,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
     t2.wrapOn(c, w, h)
@@ -278,6 +294,56 @@ def clerk_dashboard():
                 st.success(f"✅ Receipt saved!")
             except Exception as e: st.error("❌ Duplicate UTR or Database Error!")
 
+    st.markdown("---")
+    st.markdown("### 📥 Download Department Reports")
+    filter_option = st.selectbox("Select Time Period", ["Today", "Between Dates", "By Month", "Academic Year"])
+    
+    today = date.today()
+    start_date = today
+    end_date = today
+    report_name_suffix = f"{today}"
+    
+    if filter_option == "Today":
+        start_date = today; end_date = today
+    elif filter_option == "Between Dates":
+        col_d1, col_d2 = st.columns(2)
+        start_date = col_d1.date_input("From Date", today.replace(day=1))
+        end_date = col_d2.date_input("To Date", today)
+        report_name_suffix = f"{start_date}_to_{end_date}"
+    elif filter_option == "By Month":
+        col_m1, col_m2 = st.columns(2)
+        months = list(calendar.month_name)[1:]
+        selected_month = col_m1.selectbox("Month", months, index=today.month - 1)
+        selected_year = col_m2.selectbox("Year", range(today.year + 1, today.year - 5, -1), index=1)
+        month_index = months.index(selected_month) + 1
+        _, last_day = calendar.monthrange(selected_year, month_index)
+        start_date = date(selected_year, month_index, 1)
+        end_date = date(selected_year, month_index, last_day)
+        report_name_suffix = f"{selected_month}_{selected_year}"
+    elif filter_option == "Academic Year":
+        current_year = today.year
+        default_start_year = current_year - 1 if today.month < 8 else current_year
+        academic_years = [f"{y}-{y+1}" for y in range(current_year + 1, current_year - 5, -1)]
+        selected_ay = st.selectbox("Select Academic Year (Aug-Jul)", academic_years, index=1)
+        ay_start_year = int(selected_ay.split("-")[0])
+        ay_end_year = int(selected_ay.split("-")[1])
+        start_date = date(ay_start_year, 8, 1)
+        end_date = date(ay_end_year, 7, 31)
+        report_name_suffix = f"AY_{selected_ay}"
+
+    if st.button("Fetch Report"):
+        try:
+            res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
+            df = pd.DataFrame(res.data)
+            if not df.empty:
+                df = df[['payment_date', 'usn', 'student_name', 'branch', 'payment_type', 'amount', 'utr_number', 'payment_mode', 'college_account', 'entered_by']]
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(label=f"⬇️ Download Report ({filter_option})", data=csv, file_name=f"Dept_Report_{report_name_suffix}.csv", mime="text/csv", type="primary")
+            else:
+                st.info("No records found for the selected period.")
+        except Exception as e:
+            st.error(f"Failed to fetch report: {e}")
+
 # ==========================================
 # VIEW 2: DEPARTMENT PORTAL
 # ==========================================
@@ -350,7 +416,6 @@ def department_dashboard():
                 if not res.data:
                     st.warning("No historical exam records found for this USN.")
                 else:
-                    # 🟢 THE FIX: ISOLATE THE LATEST ATTEMPT PER COURSE
                     results = res.data
                     results.sort(key=lambda x: int(x.get('cycle_id', 0)), reverse=True)
                     
@@ -359,7 +424,6 @@ def department_dashboard():
                         if r['course_code'] not in latest_results:
                             latest_results[r['course_code']] = r
 
-                    # Fetch Course Titles
                     crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", list(latest_results.keys())).execute()
                     course_titles = {c['course_code']: c['title'] for c in crs_res.data} if crs_res.data else {}
 
@@ -402,7 +466,6 @@ def department_dashboard():
                         if any("Rule 1" in c['rule'] for c in eligible_summer_courses):
                             st.warning("⚠️ **Credit Cap Notice:** Student falls under Rule 1. Maximum allowed is **14 Credits**.")
                             
-                        # 🟢 THE FIX: GENERATE AND DOWNLOAD PDF
                         pdf_bytes = generate_summer_pdf(student, eligible_summer_courses, total_fee)
                         st.download_button(
                             label="🖨️ Generate & Download Official Application",
