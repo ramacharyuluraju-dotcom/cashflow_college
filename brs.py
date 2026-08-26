@@ -60,7 +60,6 @@ def get_student_photo(usn):
     return None
 
 def get_checkbox():
-    """Generates a perfect square box for the table cells"""
     t = Table([[""]], colWidths=[12], rowHeights=[12])
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.8, colors.black),
@@ -90,7 +89,6 @@ def generate_summer_pdf(student, courses, total_fee):
     margin = 35
     y = h - margin
 
-    # Fetch Assets
     assets = {}
     for k, f in {"logo": "College_logo.png", "naac": "NAAC_A_Logo.jpg", "watermark": "AMC_watermark.png"}.items():
         try:
@@ -216,7 +214,14 @@ def generate_summer_pdf(student, courses, total_fee):
     decl.wrapOn(c, w - (2*margin), 50)
     _, decl_h = decl.wrap(w - (2*margin), 50)
     decl.drawOn(c, margin, y - decl_h)
-    y -= (decl_h + 30)
+    y -= (decl_h + 20)
+
+    # 🟢 NEW: Added blank line for manual UTR entry on the PDF
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, "Transaction ID / UTR:")
+    c.setFont("Helvetica", 10)
+    c.drawString(margin + 120, y, "__________________________________________________")
+    y -= 30
 
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
@@ -254,115 +259,85 @@ def clerk_dashboard():
     st.title("📝 Desk Entry: Payment Synchronization")
     st.markdown(f"Logged in as: **{st.session_state.username}** (Clerk)")
     
-    tab_manual, tab_online = st.tabs(["Manual Receipt Entry", "Online Pending Approvals"])
+    col1, col2, col3 = st.columns(3)
     
-    with tab_manual:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown("### Student Details")
-            usn = st.text_input("Student USN (e.g., 1AM24CS099)")
-            student_name = st.text_input("Student Name")
-            branch = st.selectbox("Branch", ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ME", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"])
-        with col2:
-            st.markdown("### Payment Details")
-            payment_date = st.date_input("Date of Payment", date.today())
-            amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0)
-            payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "Other"])
-            other_description = st.text_input("Specify Other Fee", max_chars=12) if payment_type == "Other" else ""
-        with col3:
-            st.markdown("### Transaction Details")
-            payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)"])
-            utr = st.text_input("Transaction ID / UTR No.")
-            college_account = st.text_input("Credited To A/C (Bank details)")
-            
-        if st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True):
-            final_payment_type = f"Other - {other_description.strip()}" if payment_type == "Other" else payment_type
-            if not usn or not student_name or not utr or not college_account: st.error("⚠️ Missing mandatory fields!")
-            elif payment_mode == "UPI (QR / App)" and (not utr.isdigit() or len(utr) != 12): st.error("❌ UPI UTR must be 12 digits!")
-            elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not utr.isalnum() or len(utr) != 22): st.error("❌ NEFT UTR must be 22 chars!")
-            else:
-                try:
-                    supabase.table("cash_receipts").insert({"payment_date": str(payment_date), "amount": amount, "utr_number": utr.strip().upper(), "payment_type": final_payment_type, "college_account": college_account.strip(), "payment_mode": payment_mode, "usn": usn.strip().upper(), "student_name": student_name.strip().title(), "branch": branch, "entered_by": st.session_state.username}).execute()
-                    st.success(f"✅ Receipt saved!")
-                except Exception as e: st.error("❌ Duplicate UTR or Database Error!")
-
-        st.markdown("---")
-        st.markdown("### 📥 Download Department Reports")
-        filter_option = st.selectbox("Select Time Period", ["Today", "Between Dates", "By Month", "Academic Year"])
+    with col1:
+        st.markdown("### Student Details")
+        usn = st.text_input("Student USN (e.g., 1AM24CS099)")
+        student_name = st.text_input("Student Name")
+        branch = st.selectbox("Branch", ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ME", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"])
+    with col2:
+        st.markdown("### Payment Details")
+        payment_date = st.date_input("Date of Payment", date.today())
+        amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0)
+        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "Other"])
+        other_description = st.text_input("Specify Other Fee", max_chars=12) if payment_type == "Other" else ""
+    with col3:
+        st.markdown("### Transaction Details")
+        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)"])
+        utr = st.text_input("Transaction ID / UTR No.")
+        college_account = st.text_input("Credited To A/C (Bank details)")
         
-        today = date.today()
-        start_date = today
-        end_date = today
-        report_name_suffix = f"{today}"
-        
-        if filter_option == "Today":
-            start_date = today; end_date = today
-        elif filter_option == "Between Dates":
-            col_d1, col_d2 = st.columns(2)
-            start_date = col_d1.date_input("From Date", today.replace(day=1))
-            end_date = col_d2.date_input("To Date", today)
-            report_name_suffix = f"{start_date}_to_{end_date}"
-        elif filter_option == "By Month":
-            col_m1, col_m2 = st.columns(2)
-            months = list(calendar.month_name)[1:]
-            selected_month = col_m1.selectbox("Month", months, index=today.month - 1)
-            selected_year = col_m2.selectbox("Year", range(today.year + 1, today.year - 5, -1), index=1)
-            month_index = months.index(selected_month) + 1
-            _, last_day = calendar.monthrange(selected_year, month_index)
-            start_date = date(selected_year, month_index, 1)
-            end_date = date(selected_year, month_index, last_day)
-            report_name_suffix = f"{selected_month}_{selected_year}"
-        elif filter_option == "Academic Year":
-            current_year = today.year
-            default_start_year = current_year - 1 if today.month < 8 else current_year
-            academic_years = [f"{y}-{y+1}" for y in range(current_year + 1, current_year - 5, -1)]
-            selected_ay = st.selectbox("Select Academic Year (Aug-Jul)", academic_years, index=1)
-            ay_start_year = int(selected_ay.split("-")[0])
-            ay_end_year = int(selected_ay.split("-")[1])
-            start_date = date(ay_start_year, 8, 1)
-            end_date = date(ay_end_year, 7, 31)
-            report_name_suffix = f"AY_{selected_ay}"
-
-        if st.button("Fetch Report"):
+    if st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True):
+        final_payment_type = f"Other - {other_description.strip()}" if payment_type == "Other" else payment_type
+        if not usn or not student_name or not utr or not college_account: st.error("⚠️ Missing mandatory fields!")
+        elif payment_mode == "UPI (QR / App)" and (not utr.isdigit() or len(utr) != 12): st.error("❌ UPI UTR must be 12 digits!")
+        elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not utr.isalnum() or len(utr) != 22): st.error("❌ NEFT UTR must be 22 chars!")
+        else:
             try:
-                res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
-                df = pd.DataFrame(res.data)
-                if not df.empty:
-                    df = df[['payment_date', 'usn', 'student_name', 'branch', 'payment_type', 'amount', 'utr_number', 'payment_mode', 'college_account', 'entered_by']]
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button(label=f"⬇️ Download Report ({filter_option})", data=csv, file_name=f"Dept_Report_{report_name_suffix}.csv", mime="text/csv", type="primary")
-                else:
-                    st.info("No records found for the selected period.")
-            except Exception as e:
-                st.error(f"Failed to fetch report: {e}")
+                supabase.table("cash_receipts").insert({"payment_date": str(payment_date), "amount": amount, "utr_number": utr.strip().upper(), "payment_type": final_payment_type, "college_account": college_account.strip(), "payment_mode": payment_mode, "usn": usn.strip().upper(), "student_name": student_name.strip().title(), "branch": branch, "entered_by": st.session_state.username}).execute()
+                st.success(f"✅ Receipt saved!")
+            except Exception as e: st.error("❌ Duplicate UTR or Database Error!")
 
-    with tab_online:
-        st.subheader("Approve Pending Online Registrations")
-        st.info("These applications were submitted by the Departments. Mark them as 'PAID' once funds are received so the COE can generate Hall Tickets.")
-        
+    st.markdown("---")
+    st.markdown("### 📥 Download Department Reports")
+    filter_option = st.selectbox("Select Time Period", ["Today", "Between Dates", "By Month", "Academic Year"])
+    
+    today = date.today()
+    start_date = today
+    end_date = today
+    report_name_suffix = f"{today}"
+    
+    if filter_option == "Today":
+        start_date = today; end_date = today
+    elif filter_option == "Between Dates":
+        col_d1, col_d2 = st.columns(2)
+        start_date = col_d1.date_input("From Date", today.replace(day=1))
+        end_date = col_d2.date_input("To Date", today)
+        report_name_suffix = f"{start_date}_to_{end_date}"
+    elif filter_option == "By Month":
+        col_m1, col_m2 = st.columns(2)
+        months = list(calendar.month_name)[1:]
+        selected_month = col_m1.selectbox("Month", months, index=today.month - 1)
+        selected_year = col_m2.selectbox("Year", range(today.year + 1, today.year - 5, -1), index=1)
+        month_index = months.index(selected_month) + 1
+        _, last_day = calendar.monthrange(selected_year, month_index)
+        start_date = date(selected_year, month_index, 1)
+        end_date = date(selected_year, month_index, last_day)
+        report_name_suffix = f"{selected_month}_{selected_year}"
+    elif filter_option == "Academic Year":
+        current_year = today.year
+        default_start_year = current_year - 1 if today.month < 8 else current_year
+        academic_years = [f"{y}-{y+1}" for y in range(current_year + 1, current_year - 5, -1)]
+        selected_ay = st.selectbox("Select Academic Year (Aug-Jul)", academic_years, index=1)
+        ay_start_year = int(selected_ay.split("-")[0])
+        ay_end_year = int(selected_ay.split("-")[1])
+        start_date = date(ay_start_year, 8, 1)
+        end_date = date(ay_end_year, 7, 31)
+        report_name_suffix = f"AY_{selected_ay}"
+
+    if st.button("Fetch Report"):
         try:
-            pending_res = supabase.table("course_registration_online").select("usn, cycle_id, registration_type, fee_amount").eq("payment_status", "PENDING").execute()
-            if not pending_res.data:
-                st.success("No pending online applications.")
+            res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
+            df = pd.DataFrame(res.data)
+            if not df.empty:
+                df = df[['payment_date', 'usn', 'student_name', 'branch', 'payment_type', 'amount', 'utr_number', 'payment_mode', 'college_account', 'entered_by']]
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(label=f"⬇️ Download Report ({filter_option})", data=csv, file_name=f"Dept_Report_{report_name_suffix}.csv", mime="text/csv", type="primary")
             else:
-                # Group by USN and Cycle ID so the clerk approves the whole application at once
-                df_pending = pd.DataFrame(pending_res.data)
-                grouped = df_pending.groupby(['usn', 'cycle_id', 'registration_type']).agg(
-                    total_courses=('usn', 'count'),
-                    total_fee=('fee_amount', 'max') # Fee is uniform per payload
-                ).reset_index()
-                
-                st.dataframe(grouped, use_container_width=True)
-                
-                with st.form("approve_online_form"):
-                    target_usn = st.text_input("Enter USN to Approve")
-                    target_cycle = st.number_input("Cycle ID (from table)", min_value=1)
-                    if st.form_submit_button("✅ Mark Application as PAID"):
-                        supabase.table("course_registration_online").update({"payment_status": "PAID"}).eq("usn", target_usn.strip().upper()).eq("cycle_id", target_cycle).execute()
-                        st.success(f"Application for {target_usn} marked as PAID. It is now ready for COE processing.")
-                        st.rerun()
+                st.info("No records found for the selected period.")
         except Exception as e:
-            st.error(f"Error fetching pending applications: {e}")
+            st.error(f"Failed to fetch report: {e}")
 
 # ==========================================
 # VIEW 2: DEPARTMENT PORTAL
@@ -371,7 +346,6 @@ def department_dashboard():
     st.title("🏛️ Department Online Course Registration Portal")
     st.markdown(f"Coordinator: **{st.session_state.username}**")
     
-    # 🟢 FIX: Fetch program_type along with cycle details
     try:
         cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type").eq("is_active", True).eq("is_brs_active", True).execute()
         active_cycles = cycles_res.data if cycles_res.data else []
@@ -383,7 +357,8 @@ def department_dashboard():
         st.warning("⚠️ No active exam cycles are currently open for online registration. Please contact the COE.")
         return
 
-    tab_reg, tab_summer = st.tabs(["📝 Regular / Backlog Registration", "☀️ Summer Semester Registration"])
+    # 🟢 NEW: Added the 3rd tab for Approvals directly on the Department Desk
+    tab_reg, tab_summer, tab_approve = st.tabs(["📝 Regular / Backlog Registration", "☀️ Summer Semester Registration", "✅ Approve Pending Payments"])
     
     # --- REGULAR REGISTRATION ---
     with tab_reg:
@@ -403,18 +378,15 @@ def department_dashboard():
                     st.error("Student not found.")
                 else:
                     stu = stu_res.data[0]
-                    # 🟢 FIX 1: Block DISCONTINUED students
                     if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
                         st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is marked as DISCONTINUED in the system.")
                     else:
                         branch_code = stu.get('branch_code', '')
                         current_sem = int(stu.get('current_sem', 1))
                         
-                        # 🟢 FIX 2: Fetch Program Type
                         br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
                         prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                         
-                        # 🟢 FIX 3: Validate Cycle Program Type Match
                         if target_reg_cycle.get('program_type', 'BOTH') not in ['BOTH', prog_type]:
                             st.error(f"❌ **Program Mismatch:** Student is {prog_type}, but the selected cycle is restricted to {target_reg_cycle.get('program_type')} students.")
                         else:
@@ -486,18 +458,13 @@ def department_dashboard():
                     st.error("Student not found.")
                 else:
                     student = stu_res.data[0]
-                    
-                    # 🟢 FIX 1: Block DISCONTINUED students
                     if str(student.get('status', '')).strip().upper() == 'DISCONTINUED':
                         st.error(f"❌ **Registration Blocked:** Student '{summer_usn}' is marked as DISCONTINUED in the system.")
                     else:
                         branch_code = student.get('branch_code', '')
-                        
-                        # 🟢 FIX 2: Fetch Program Type
                         br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
                         prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                         
-                        # 🟢 FIX 3: Validate Cycle Program Type Match
                         if target_sum_cycle.get('program_type', 'BOTH') not in ['BOTH', prog_type]:
                             st.error(f"❌ **Program Mismatch:** Student is {prog_type}, but the selected cycle is restricted to {target_sum_cycle.get('program_type')} students.")
                         else:
@@ -519,9 +486,7 @@ def department_dashboard():
                                 crs_res = supabase.table("master_courses").select("course_code, title, semester_id, credits").in_("course_code", list(latest_results.keys())).execute()
                                 course_info = {c['course_code']: {'title': c['title'], 'sem': c['semester_id'], 'credits': float(c.get('credits', 4))} for c in crs_res.data} if crs_res.data else {}
 
-                                # 🟢 FIX 4: Dynamic CIE Threshold based on Program Type
                                 cie_threshold = 20 if prog_type == "UG" else 25 
-                                
                                 eligible_summer_courses = []
                                 
                                 for cc, r in latest_results.items():
@@ -590,7 +555,7 @@ def department_dashboard():
                                                 try:
                                                     supabase.table("course_registration_online").delete().eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                                                     supabase.table("course_registration_online").insert(payload).execute()
-                                                    st.success(f"✅ Application pushed to Finance Desk (Pending Payment)!")
+                                                    st.success(f"✅ Application pushed to Approval Desk (Pending Payment)!")
                                                     
                                                     pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee)
                                                     st.download_button(
@@ -602,6 +567,45 @@ def department_dashboard():
                                                     )
                                                 except Exception as e:
                                                     st.error(f"Database Error: {e}")
+
+    # --- NEW: APPROVE PENDING PAYMENTS ---
+    with tab_approve:
+        st.subheader("✅ Approve Pending Online Registrations")
+        st.info("Mark applications as 'PAID' once funds are received from the student. This officially unlocks their Hall Ticket generation.")
+        
+        try:
+            pending_res = supabase.table("course_registration_online").select("usn, cycle_id, registration_type, fee_amount").eq("payment_status", "PENDING").execute()
+            if not pending_res.data:
+                st.success("No pending online applications at this time.")
+            else:
+                df_pending = pd.DataFrame(pending_res.data)
+                grouped = df_pending.groupby(['usn', 'cycle_id', 'registration_type']).agg(
+                    total_courses=('usn', 'count'),
+                    total_fee=('fee_amount', 'max')
+                ).reset_index()
+                
+                st.dataframe(grouped, use_container_width=True)
+                
+                with st.form("approve_online_form"):
+                    target_usn = st.text_input("Enter USN to Approve").strip().upper()
+                    target_cycle = st.number_input("Cycle ID (from table above)", min_value=1)
+                    
+                    # 🟢 NEW: Added the optional Transaction ID field directly to the form
+                    target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank if manually tracked elsewhere.")
+                    
+                    if st.form_submit_button("✅ Mark Application as PAID"):
+                        update_payload = {"payment_status": "PAID"}
+                        
+                        # Only add the UTR to the database payload if they actually typed one in
+                        if target_utr:
+                            update_payload["utr_number"] = target_utr
+                            
+                        supabase.table("course_registration_online").update(update_payload).eq("usn", target_usn).eq("cycle_id", target_cycle).execute()
+                        st.success(f"Application for {target_usn} marked as PAID. It is now ready for COE processing.")
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Error fetching pending applications: {e}")
+
 # ==========================================
 # VIEW 3: ADMIN DASHBOARD (SCRUTINY & EXPORT)
 # ==========================================
