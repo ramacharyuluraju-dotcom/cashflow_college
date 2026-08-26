@@ -59,30 +59,22 @@ def get_student_photo(usn):
         except: pass
     return None
 
-def get_checkbox():
-    t = Table([[""]], colWidths=[12], rowHeights=[12])
-    t.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.8, colors.black),
-        ('BACKGROUND', (0,0), (-1,-1), colors.white)
-    ]))
-    return t
-
 def calculate_summer_fees(courses):
     if not courses: return 0
     base_fee = 400
     total = base_fee
     rule2_count = 0
     for c in courses:
-        if "Rule 1" in c['rule']:
+        if "Rule 1" in c.get('rule', ''):
             total += 5600
-        elif "Rule 2" in c['rule']:
+        elif "Rule 2" in c.get('rule', ''):
             rule2_count += 1
             total += 2000 if rule2_count == 1 else 1000
-        elif "Rule 3" in c['rule']:
+        elif "Rule 3" in c.get('rule', ''):
             total += 600
     return total
 
-def generate_summer_pdf(student, courses, total_fee):
+def generate_summer_pdf(student, courses, total_fee, utr_string=""):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
@@ -162,15 +154,16 @@ def generate_summer_pdf(student, courses, total_fee):
     c.drawString(margin, y, "Summer Subjects Registered")
     y -= 5
 
+    # 🟢 NEW: PDF now prints "Applied" instead of an empty checkbox
     c_data = [["Subject Code", "Subject Name", "Category / Rule", "Fee (Rs)", "Apply"]]
     for crs in courses:
-        fee_str = "5600" if "Rule 1" in crs['rule'] else ("2000/1000" if "Rule 2" in crs['rule'] else "600")
+        fee_str = "5600" if "Rule 1" in crs.get('rule', '') else ("2000/1000" if "Rule 2" in crs.get('rule', '') else "600")
         c_data.append([
             crs['course_code'], 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-            Paragraph(crs['rule'], getSampleStyleSheet()['Normal']), 
+            Paragraph(crs.get('rule', ''), getSampleStyleSheet()['Normal']), 
             fee_str,
-            get_checkbox()
+            "Applied" 
         ])
     
     c_data.append(["", "", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "400", ""])
@@ -216,10 +209,14 @@ def generate_summer_pdf(student, courses, total_fee):
     decl.drawOn(c, margin, y - decl_h)
     y -= (decl_h + 20)
 
+    # 🟢 NEW: Dynamically prints the entered UTR, or a blank line if none was provided
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, "Transaction ID / UTR:")
     c.setFont("Helvetica", 10)
-    c.drawString(margin + 120, y, "__________________________________________________")
+    if utr_string and utr_string.strip():
+        c.drawString(margin + 120, y, utr_string.strip())
+    else:
+        c.drawString(margin + 120, y, "__________________________________________________")
     y -= 30
 
     c.setFont("Helvetica-Bold", 10)
@@ -356,7 +353,8 @@ def department_dashboard():
         st.warning("⚠️ No active exam cycles are currently open for online registration. Please contact the COE.")
         return
 
-    tab_reg, tab_summer, tab_approve = st.tabs(["📝 Regular / Backlog Registration", "☀️ Summer Semester Registration", "✅ Approve Pending Payments"])
+    # 🟢 REMOVED APPROVAL TAB: Kept only Regular and Summer
+    tab_reg, tab_summer = st.tabs(["📝 Regular / Backlog Registration", "☀️ Summer Semester Registration"])
     
     # --- REGULAR REGISTRATION ---
     with tab_reg:
@@ -371,18 +369,27 @@ def department_dashboard():
             
             target_usn = st.text_input("Enter Student USN for Registration").strip().upper()
             if target_usn:
-                
-                # 🟢 THE NEW DUPLICATE REGISTRATION FIREWALL
-                staging_check = supabase.table("course_registration_online").select("payment_status").eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
-                is_paid = any(r['payment_status'] == 'PAID' for r in (staging_check.data or []))
+                staging_check = supabase.table("course_registration_online").select("*").eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
                 main_check = supabase.table("course_registrations").select("usn").eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
                 
-                if is_paid or (main_check.data and len(main_check.data) > 0):
-                    st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is already officially registered and PAID for this cycle!")
+                is_staged = staging_check.data and len(staging_check.data) > 0
+                is_main = main_check.data and len(main_check.data) > 0
+                
+                if is_main:
+                    st.error(f"❌ Student '{target_usn}' is already officially registered in the main COE database for this cycle!")
+                elif is_staged:
+                    st.success(f"✅ Student '{target_usn}' is already registered online for this cycle!")
+                    
+                    reg_data = staging_check.data
+                    current_utr = reg_data[0].get('utr_number', '') or ""
+                    
+                    col_u1, col_u2 = st.columns([2, 1])
+                    new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr, key="reg_update_utr")
+                    if col_u2.button("Update UTR Record"):
+                        supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
+                        st.success("✅ UTR successfully updated in the database!")
+                        st.rerun()
                 else:
-                    if staging_check.data and len(staging_check.data) > 0:
-                        st.warning("⚠️ This student currently has a **PENDING** application. Submitting again will overwrite their existing unpaid courses.")
-                        
                     stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
                     if not stu_res.data: 
                         st.error("Student not found.")
@@ -432,7 +439,12 @@ def department_dashboard():
                                         total_credits += float(next(o for o in oe_courses if o['course_code'] == oe_options[chosen_oe]).get('credits', 3))
                                         
                                 st.info(f"📊 **Total Credits:** {total_credits}")
-                                if st.button("💾 Submit Registration to Finance", type="primary"):
+                                
+                                # 🟢 NEW: UTR input directly in the registration form
+                                st.markdown("### 3. Payment Details")
+                                target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Enter if paid, or leave blank to update later.")
+                                
+                                if st.button("💾 Submit Registration", type="primary"):
                                     payload = [{
                                         "cycle_id": target_reg_cycle_id, 
                                         "usn": target_usn, 
@@ -442,12 +454,13 @@ def department_dashboard():
                                         "registration_type": "REGULAR",
                                         "rule_category": "", 
                                         "fee_amount": 0, 
-                                        "payment_status": "PENDING"
+                                        "payment_status": "PAID", 
+                                        "utr_number": target_utr.strip()
                                     } for cc in selected_codes]
                                     
-                                    supabase.table("course_registration_online").delete().eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
                                     supabase.table("course_registration_online").insert(payload).execute()
-                                    st.success("✅ Application submitted to Approval Desk (Pending Payment)!")
+                                    st.success("✅ Application successfully registered!")
+                                    st.rerun()
 
     # --- SUMMER REGISTRATION ---
     with tab_summer:
@@ -464,17 +477,57 @@ def department_dashboard():
             summer_usn = st.text_input("Enter USN for Summer Semester Processing").strip().upper()
             if summer_usn:
                 
-                # 🟢 THE NEW DUPLICATE REGISTRATION FIREWALL
-                staging_check = supabase.table("course_registration_online").select("payment_status").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
-                is_paid = any(r['payment_status'] == 'PAID' for r in (staging_check.data or []))
+                staging_check = supabase.table("course_registration_online").select("*").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                 main_check = supabase.table("course_registrations").select("usn").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                 
-                if is_paid or (main_check.data and len(main_check.data) > 0):
-                    st.error(f"❌ **Registration Blocked:** Student '{summer_usn}' is already officially registered and PAID for this cycle!")
-                else:
-                    if staging_check.data and len(staging_check.data) > 0:
-                        st.warning("⚠️ This student currently has a **PENDING** application. Submitting again will overwrite their existing unpaid courses.")
+                is_staged = staging_check.data and len(staging_check.data) > 0
+                is_main = main_check.data and len(main_check.data) > 0
+                
+                if is_main:
+                    st.error(f"❌ Student '{summer_usn}' is already officially registered in the main COE database for this cycle!")
+                
+                # 🟢 NEW: Missed Download / Re-Download Engine
+                elif is_staged:
+                    st.success(f"✅ Student '{summer_usn}' is already registered online for this cycle!")
+                    
+                    reg_data = staging_check.data
+                    current_utr = reg_data[0].get('utr_number', '') or ""
+                    total_fee = reg_data[0].get('fee_amount', 0)
+                    
+                    # 🟢 NEW: UTR Updater
+                    col_u1, col_u2 = st.columns([2, 1])
+                    new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr)
+                    if col_u2.button("Update UTR Record"):
+                        supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
+                        st.success("✅ UTR successfully updated in the database!")
+                        st.rerun()
+
+                    # Reconstruct courses for PDF generation
+                    course_codes = [r['course_code'] for r in reg_data]
+                    crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
+                    c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
+                    
+                    reconstructed_courses = []
+                    for r in reg_data:
+                        reconstructed_courses.append({
+                            'course_code': r['course_code'],
+                            'course_title': c_titles.get(r['course_code'], 'Unknown'),
+                            'rule': r.get('rule_category', '')
+                        })
                         
+                    stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
+                    student = stu_res.data[0] if stu_res.data else {'usn': summer_usn}
+                    
+                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr)
+                    st.download_button(
+                        label="🖨️ Re-Download Application PDF",
+                        data=pdf_bytes,
+                        file_name=f"Summer_Application_{summer_usn}.pdf",
+                        mime="application/pdf",
+                        type="primary"
+                    )
+
+                else:
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     if not stu_res.data:
                         st.error("Student not found.")
@@ -561,7 +614,11 @@ def department_dashboard():
                                                 if rule_1_credits > 0:
                                                     st.success(f"✅ Rule 1 Credits Valid: {rule_1_credits} / 14")
                                                 
-                                                if st.button("💾 Submit to Finance & Generate PDF", type="primary"):
+                                                # 🟢 NEW: UTR input field inside the registration process
+                                                st.markdown("### Payment Details")
+                                                target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually on the printed form.")
+                                                
+                                                if st.button("💾 Submit Registration & Generate PDF", type="primary"):
                                                     payload = [{
                                                         "cycle_id": target_sum_cycle_id,
                                                         "usn": summer_usn,
@@ -571,15 +628,15 @@ def department_dashboard():
                                                         "registration_type": "SUMMER",
                                                         "rule_category": c['rule'],
                                                         "fee_amount": total_fee,
-                                                        "payment_status": "PENDING"
+                                                        "payment_status": "PAID",
+                                                        "utr_number": target_utr.strip()
                                                     } for c in selected_summer_courses]
                                                     
                                                     try:
-                                                        supabase.table("course_registration_online").delete().eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                                                         supabase.table("course_registration_online").insert(payload).execute()
-                                                        st.success(f"✅ Application pushed to Approval Desk (Pending Payment)!")
+                                                        st.success(f"✅ Application successfully registered!")
                                                         
-                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee)
+                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr)
                                                         st.download_button(
                                                             label="🖨️ Download Official Application PDF",
                                                             data=pdf_bytes,
@@ -589,59 +646,6 @@ def department_dashboard():
                                                         )
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
-
-    # --- APPROVE PENDING PAYMENTS ---
-    with tab_approve:
-        st.subheader("✅ Approve Pending Online Registrations")
-        st.info("Mark applications as 'PAID' once funds are received from the student. This officially unlocks their Hall Ticket generation.")
-        
-        try:
-            pending_res = supabase.table("course_registration_online").select("usn, cycle_id, registration_type, fee_amount").eq("payment_status", "PENDING").execute()
-            if not pending_res.data:
-                st.success("No pending online applications at this time.")
-            else:
-                df_pending = pd.DataFrame(pending_res.data)
-                
-                # 🟢 THE NEW SMART DROPDOWN: Fetching friendly cycle names
-                cycle_ids = df_pending['cycle_id'].unique().tolist()
-                cycles_req = supabase.table("exam_cycles").select("cycle_id, cycle_name").in_("cycle_id", cycle_ids).execute()
-                cycle_map = {c['cycle_id']: c['cycle_name'] for c in cycles_req.data} if cycles_req.data else {}
-                
-                df_pending['cycle_name'] = df_pending['cycle_id'].map(cycle_map)
-                
-                grouped = df_pending.groupby(['usn', 'cycle_id', 'cycle_name', 'registration_type']).agg(
-                    total_courses=('usn', 'count'),
-                    total_fee=('fee_amount', 'max')
-                ).reset_index()
-                
-                st.dataframe(grouped[['usn', 'cycle_name', 'registration_type', 'total_courses', 'total_fee']], use_container_width=True)
-                
-                with st.form("approve_online_form"):
-                    
-                    # 🟢 THE NEW SMART DROPDOWN LOGIC
-                    approval_options = [f"{row['usn']} | {row['cycle_name']}" for _, row in grouped.iterrows()]
-                    selected_app = st.selectbox("Select Pending Application to Approve", ["-- Select --"] + approval_options)
-                    
-                    target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank if manually tracked elsewhere.")
-                    
-                    if st.form_submit_button("✅ Mark Application as PAID"):
-                        if selected_app != "-- Select --":
-                            t_usn = selected_app.split(" | ")[0].strip()
-                            t_cname = selected_app.split(" | ")[1].strip()
-                            
-                            t_cycle_id = next(cid for cid, name in cycle_map.items() if name == t_cname)
-                            
-                            update_payload = {"payment_status": "PAID"}
-                            if target_utr:
-                                update_payload["utr_number"] = target_utr
-                                
-                            supabase.table("course_registration_online").update(update_payload).eq("usn", t_usn).eq("cycle_id", t_cycle_id).execute()
-                            st.success(f"Application for {t_usn} marked as PAID. It is now ready for COE processing.")
-                            st.rerun()
-                        else:
-                            st.error("⚠️ Please select an application from the dropdown to approve.")
-        except Exception as e:
-            st.error(f"Error fetching pending applications: {e}")
 
 # ==========================================
 # VIEW 3: ADMIN DASHBOARD (SCRUTINY & EXPORT)
