@@ -82,13 +82,13 @@ def calculate_summer_fees(courses):
             total += 600
     return total
 
-# 🟢 NEW: Array-checking function for comma-separated branches
 def branch_match(course_branches_str, student_branch):
     if not course_branches_str: return False
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
     return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
 
-def generate_summer_pdf(student, courses, total_fee, utr_string=""):
+# 🟢 NEW: PDF Generator now dynamically prints the correct Academic Year and Exam Type
+def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
@@ -123,7 +123,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string=""):
     y -= 65
 
     c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, y, "Course Registration-Students Admission for Semester 2025-26")
+    c.drawCentredString(w/2, y, f"Course Registration-Students Admission for {exam_type} Semester {academic_year}")
     y -= 20
 
     c.setFont("Helvetica-Bold", 10)
@@ -354,42 +354,44 @@ def department_dashboard():
     st.title("🏛️ Department Online Course Registration Portal")
     st.markdown(f"Coordinator: **{st.session_state.username}**")
     
+    # 🟢 NEW: Fetch Global Academic Settings dynamically
     try:
-        cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type").eq("is_active", True).eq("is_brs_active", True).execute()
-        active_cycles = cycles_res.data if cycles_res.data else []
-    except Exception as e:
-        active_cycles = []
-        st.error(f"Error fetching cycles: {e}")
+        gs_res = supabase.table("global_settings").select("*").execute()
+        global_settings = {r['setting_key']: r['setting_value'] for r in gs_res.data}
+    except:
+        global_settings = {}
+        
+    active_ay = global_settings.get('active_academic_year', '2026-27')
+    active_term = global_settings.get('active_term', 'ODD')
 
-    if not active_cycles:
-        st.warning("⚠️ No active exam cycles are currently open for online registration. Please contact the COE.")
-        return
-
-    tab_reg, tab_summer = st.tabs(["📝 Regular / Backlog Registration", "☀️ Summer Semester Registration"])
+    tab_reg, tab_summer = st.tabs(["📝 Regular Course Registration", "☀️ Summer Exam Registration"])
     
-    # --- REGULAR REGISTRATION ---
+    # --- REGULAR REGISTRATION (DECOUPLED FROM EXAM CYCLES) ---
     with tab_reg:
-        regular_cycles = [c for c in active_cycles if "Summer" not in c.get('exam_type', '') and "Make-up" not in c.get('exam_type', '')]
-        if not regular_cycles:
-            st.info("No Regular exam cycles are currently open.")
-        else:
-            reg_cycle_options = {c['cycle_name']: c for c in regular_cycles}
-            selected_reg_cycle_name = st.selectbox("Select Target Exam Cycle (Regular):", options=list(reg_cycle_options.keys()))
-            target_reg_cycle = reg_cycle_options[selected_reg_cycle_name]
-            target_reg_cycle_id = target_reg_cycle['cycle_id']
+        st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester\n\n*Students are registered into this academic session independently of exam schedules.*")
+        
+        target_usn = st.text_input("Enter Student USN for Registration").strip().upper()
+        if target_usn:
+            stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
             
-            target_usn = st.text_input("Enter Student USN for Registration").strip().upper()
-            if target_usn:
-                staging_check = supabase.table("course_registration_online").select("*").eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
-                main_check = supabase.table("course_registrations").select("usn").eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
+            if not stu_res.data: 
+                st.error("Student not found.")
+            else:
+                stu = stu_res.data[0]
+                current_sem = int(stu.get('current_sem', 1))
+                student_scheme = int(stu.get('scheme_batch', 25))
+                
+                # 🟢 Check for existing regular registrations in this specific Academic Year & Semester
+                staging_check = supabase.table("course_registration_online").select("*").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
+                main_check = supabase.table("course_registrations").select("usn").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).execute()
                 
                 is_staged = staging_check.data and len(staging_check.data) > 0
                 is_main = main_check.data and len(main_check.data) > 0
                 
                 if is_main:
-                    st.error(f"❌ Student '{target_usn}' is already officially registered in the main COE database for this cycle!")
+                    st.error(f"❌ Student '{target_usn}' is already officially registered in the main COE database for {active_ay} Sem {current_sem}!")
                 elif is_staged:
-                    st.success(f"✅ Student '{target_usn}' is already registered online for this cycle!")
+                    st.success(f"✅ Student '{target_usn}' is already registered online for this academic term!")
                     
                     reg_data = staging_check.data
                     current_utr = reg_data[0].get('utr_number', '') or ""
@@ -397,11 +399,11 @@ def department_dashboard():
                     col_u1, col_u2 = st.columns([2, 1])
                     new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr, key="reg_update_utr")
                     if col_u2.button("Update UTR Record"):
-                        supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
+                        supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
                         st.success("✅ UTR successfully updated in the database!")
                         st.rerun()
                         
-                    # 🟢 NEW: PDF Generator for Regular Registration (if already applied)
+                    # Reconstruct courses for PDF generation
                     course_codes = [r['course_code'] for r in reg_data]
                     crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
                     c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
@@ -413,11 +415,8 @@ def department_dashboard():
                             'course_title': c_titles.get(r['course_code'], 'Unknown'),
                             'rule': 'Regular Subject'
                         })
-                        
-                    stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
-                    student = stu_res.data[0] if stu_res.data else {'usn': target_usn}
                     
-                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, 0, current_utr)
+                    pdf_bytes = generate_summer_pdf(stu, reconstructed_courses, 0, current_utr, academic_year=active_ay, exam_type="Regular")
                     st.download_button(
                         label="🖨️ Re-Download Application PDF",
                         data=pdf_bytes,
@@ -426,116 +425,108 @@ def department_dashboard():
                         type="primary"
                     )
                 else:
-                    stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
-                    if not stu_res.data: 
-                        st.error("Student not found.")
+                    if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
+                        st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is marked as DISCONTINUED in the system.")
                     else:
-                        stu = stu_res.data[0]
-                        student_scheme = int(stu.get('scheme_batch', 25))
+                        branch_code = stu.get('branch_code', '')
+                        br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
+                        prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                         
-                        if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
-                            st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is marked as DISCONTINUED in the system.")
-                        else:
-                            branch_code = stu.get('branch_code', '')
-                            current_sem = int(stu.get('current_sem', 1))
+                        st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**")
+                        
+                        courses_res = supabase.table("master_courses").select("*").execute()
+                        all_courses = courses_res.data if courses_res.data else []
+                        
+                        core_courses = [
+                            c for c in all_courses 
+                            if c.get('semester_id') == current_sem 
+                            and branch_match(c.get('branch_code', ''), branch_code)
+                            and c.get('course_type', 'CORE') == 'CORE'
+                            and int(c.get('scheme_batch', 25)) == student_scheme
+                        ]
+                        
+                        pe_courses = [
+                            c for c in all_courses 
+                            if c.get('semester_id') == current_sem 
+                            and branch_match(c.get('branch_code', ''), branch_code)
+                            and c.get('course_type') == 'PE'
+                            and int(c.get('scheme_batch', 25)) == student_scheme
+                        ]
+                        
+                        oe_courses = [
+                            c for c in all_courses 
+                            if c.get('semester_id') == current_sem 
+                            and not branch_match(c.get('branch_code', ''), branch_code) 
+                            and c.get('course_type') == 'OE'
+                            and int(c.get('scheme_batch', 25)) == student_scheme
+                        ]
+                        
+                        st.markdown("### 1. Mandatory Core Subjects")
+                        selected_codes, total_credits = [], 0.0
+                        for core in core_courses:
+                            st.checkbox(f"{core['course_code']} - {core['title']}", value=True, disabled=True, key=f"core_{core['course_code']}")
+                            selected_codes.append(core['course_code'])
+                            total_credits += float(core.get('credits', 4))
                             
-                            br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
-                            prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
+                        st.markdown("### 2. Electives")
+                        col_pe, col_oe = st.columns(2)
+                        if pe_courses:
+                            pe_options = {f"{p['course_code']} - {p['title']}": p['course_code'] for p in pe_courses}
+                            chosen_pe = col_pe.selectbox("Professional Elective", ["-- Select --"] + list(pe_options.keys()))
+                            if chosen_pe != "-- Select --":
+                                selected_codes.append(pe_options[chosen_pe])
+                                total_credits += float(next(p for p in pe_courses if p['course_code'] == pe_options[chosen_pe]).get('credits', 3))
+                        if oe_courses:
+                            oe_options = {f"{o['course_code']} [{o['branch_code']}] - {o['title']}": o['course_code'] for o in oe_courses}
+                            chosen_oe = col_oe.selectbox("Open Elective", ["-- Select --"] + list(oe_options.keys()))
+                            if chosen_oe != "-- Select --":
+                                selected_codes.append(oe_options[chosen_oe])
+                                total_credits += float(next(o for o in oe_courses if o['course_code'] == oe_options[chosen_oe]).get('credits', 3))
+                                
+                        st.info(f"📊 **Total Credits:** {total_credits}")
+                        
+                        st.markdown("### 3. Payment Details")
+                        target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Enter if paid, or leave blank to update later.")
+                        
+                        if st.button("💾 Submit Registration & Generate PDF", type="primary"):
+                            payload = [{
+                                # 🟢 NOTE: cycle_id is intentionally omitted for Regular Academic Enrollments
+                                "usn": target_usn, 
+                                "course_code": cc, 
+                                "semester": current_sem, 
+                                "academic_year": active_ay, 
+                                "registration_type": "REGULAR",
+                                "rule_category": "", 
+                                "fee_amount": 0, 
+                                "payment_status": "PAID", 
+                                "utr_number": target_utr.strip()
+                            } for cc in selected_codes]
                             
-                            if target_reg_cycle.get('program_type', 'BOTH') not in ['BOTH', prog_type]:
-                                st.error(f"❌ **Program Mismatch:** Student is {prog_type}, but the selected cycle is restricted to {target_reg_cycle.get('program_type')} students.")
-                            else:
-                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**")
+                            try:
+                                supabase.table("course_registration_online").insert(payload).execute()
+                                st.success("✅ Application successfully registered!")
                                 
-                                courses_res = supabase.table("master_courses").select("*").execute()
-                                all_courses = courses_res.data if courses_res.data else []
+                                pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Subject"} for cc in selected_codes]
+                                pdf_bytes = generate_summer_pdf(stu, pdf_courses, 0, target_utr, academic_year=active_ay, exam_type="Regular")
                                 
-                                # 🟢 Array-based Scheme and Branch Checking
-                                core_courses = [
-                                    c for c in all_courses 
-                                    if c.get('semester_id') == current_sem 
-                                    and branch_match(c.get('branch_code', ''), branch_code)
-                                    and c.get('course_type', 'CORE') == 'CORE'
-                                    and int(c.get('scheme_batch', 25)) == student_scheme
-                                ]
-                                
-                                pe_courses = [
-                                    c for c in all_courses 
-                                    if c.get('semester_id') == current_sem 
-                                    and branch_match(c.get('branch_code', ''), branch_code)
-                                    and c.get('course_type') == 'PE'
-                                    and int(c.get('scheme_batch', 25)) == student_scheme
-                                ]
-                                
-                                oe_courses = [
-                                    c for c in all_courses 
-                                    if c.get('semester_id') == current_sem 
-                                    and not branch_match(c.get('branch_code', ''), branch_code) 
-                                    and c.get('course_type') == 'OE'
-                                    and int(c.get('scheme_batch', 25)) == student_scheme
-                                ]
-                                
-                                st.markdown("### 1. Mandatory Core Subjects")
-                                selected_codes, total_credits = [], 0.0
-                                for core in core_courses:
-                                    st.checkbox(f"{core['course_code']} - {core['title']}", value=True, disabled=True, key=f"core_{core['course_code']}")
-                                    selected_codes.append(core['course_code'])
-                                    total_credits += float(core.get('credits', 4))
-                                    
-                                st.markdown("### 2. Electives")
-                                col_pe, col_oe = st.columns(2)
-                                if pe_courses:
-                                    pe_options = {f"{p['course_code']} - {p['title']}": p['course_code'] for p in pe_courses}
-                                    chosen_pe = col_pe.selectbox("Professional Elective", ["-- Select --"] + list(pe_options.keys()))
-                                    if chosen_pe != "-- Select --":
-                                        selected_codes.append(pe_options[chosen_pe])
-                                        total_credits += float(next(p for p in pe_courses if p['course_code'] == pe_options[chosen_pe]).get('credits', 3))
-                                if oe_courses:
-                                    oe_options = {f"{o['course_code']} [{o['branch_code']}] - {o['title']}": o['course_code'] for o in oe_courses}
-                                    chosen_oe = col_oe.selectbox("Open Elective", ["-- Select --"] + list(oe_options.keys()))
-                                    if chosen_oe != "-- Select --":
-                                        selected_codes.append(oe_options[chosen_oe])
-                                        total_credits += float(next(o for o in oe_courses if o['course_code'] == oe_options[chosen_oe]).get('credits', 3))
-                                        
-                                st.info(f"📊 **Total Credits:** {total_credits}")
-                                
-                                st.markdown("### 3. Payment Details")
-                                target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Enter if paid, or leave blank to update later.")
-                                
-                                if st.button("💾 Submit Registration & Generate PDF", type="primary"):
-                                    payload = [{
-                                        "cycle_id": target_reg_cycle_id, 
-                                        "usn": target_usn, 
-                                        "course_code": cc, 
-                                        "semester": current_sem, 
-                                        "academic_year": "2025-26", 
-                                        "registration_type": "REGULAR",
-                                        "rule_category": "", 
-                                        "fee_amount": 0, 
-                                        "payment_status": "PAID", 
-                                        "utr_number": target_utr.strip()
-                                    } for cc in selected_codes]
-                                    
-                                    try:
-                                        supabase.table("course_registration_online").insert(payload).execute()
-                                        st.success("✅ Application successfully registered!")
-                                        
-                                        pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Subject"} for cc in selected_codes]
-                                        pdf_bytes = generate_summer_pdf(stu, pdf_courses, 0, target_utr)
-                                        
-                                        st.download_button(
-                                            label="🖨️ Download Official Application PDF",
-                                            data=pdf_bytes,
-                                            file_name=f"Regular_Application_{target_usn}.pdf",
-                                            mime="application/pdf",
-                                            type="primary"
-                                        )
-                                    except Exception as e:
-                                        st.error(f"Database Error: {e}")
+                                st.download_button(
+                                    label="🖨️ Download Official Application PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"Regular_Application_{target_usn}.pdf",
+                                    mime="application/pdf",
+                                    type="primary"
+                                )
+                            except Exception as e:
+                                st.error(f"Database Error: {e}")
 
-    # --- SUMMER REGISTRATION ---
+    # --- SUMMER REGISTRATION (STILL LINKED TO EXAM CYCLE EVENT) ---
     with tab_summer:
-        summer_cycles = [c for c in active_cycles if "Summer" in c.get('exam_type', '')]
+        try:
+            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type").eq("is_active", True).eq("is_brs_active", True).eq("exam_type", "Summer").execute()
+            summer_cycles = cycles_res.data if cycles_res.data else []
+        except:
+            summer_cycles = []
+
         if not summer_cycles:
             st.info("No Summer exam cycles are currently open for BRS registration.")
         else:
@@ -546,8 +537,8 @@ def department_dashboard():
             
             st.subheader("☀️ Summer Semester Application")
             summer_usn = st.text_input("Enter USN for Summer Semester Processing").strip().upper()
+            
             if summer_usn:
-                
                 staging_check = supabase.table("course_registration_online").select("*").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                 main_check = supabase.table("course_registrations").select("usn").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                 
@@ -556,7 +547,6 @@ def department_dashboard():
                 
                 if is_main:
                     st.error(f"❌ Student '{summer_usn}' is already officially registered in the main COE database for this cycle!")
-                
                 elif is_staged:
                     st.success(f"✅ Student '{summer_usn}' is already registered online for this cycle!")
                     
@@ -586,7 +576,7 @@ def department_dashboard():
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     student = stu_res.data[0] if stu_res.data else {'usn': summer_usn}
                     
-                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr)
+                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=active_ay, exam_type="Summer")
                     st.download_button(
                         label="🖨️ Re-Download Application PDF",
                         data=pdf_bytes,
@@ -692,7 +682,7 @@ def department_dashboard():
                                                         "usn": summer_usn,
                                                         "course_code": c['course_code'],
                                                         "semester": c['semester'],
-                                                        "academic_year": "2025-26",
+                                                        "academic_year": active_ay, 
                                                         "registration_type": "SUMMER",
                                                         "rule_category": c['rule'],
                                                         "fee_amount": total_fee,
@@ -704,7 +694,7 @@ def department_dashboard():
                                                         supabase.table("course_registration_online").insert(payload).execute()
                                                         st.success(f"✅ Application successfully registered!")
                                                         
-                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr)
+                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=active_ay, exam_type="Summer")
                                                         st.download_button(
                                                             label="🖨️ Download Official Application PDF",
                                                             data=pdf_bytes,
