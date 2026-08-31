@@ -42,7 +42,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = ''
 
 # ==========================================
-# PDF GENERATION HELPERS
+# HELPER FUNCTIONS
 # ==========================================
 def get_student_photo(usn):
     clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
@@ -59,6 +59,14 @@ def get_student_photo(usn):
         except: pass
     return None
 
+def get_checkbox():
+    t = Table([[""]], colWidths=[12], rowHeights=[12])
+    t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.8, colors.black),
+        ('BACKGROUND', (0,0), (-1,-1), colors.white)
+    ]))
+    return t
+
 def calculate_summer_fees(courses):
     if not courses: return 0
     base_fee = 400
@@ -73,6 +81,12 @@ def calculate_summer_fees(courses):
         elif "Rule 3" in c.get('rule', ''):
             total += 600
     return total
+
+# 🟢 NEW: Array-checking function for comma-separated branches
+def branch_match(course_branches_str, student_branch):
+    if not course_branches_str: return False
+    allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
+    return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
 
 def generate_summer_pdf(student, courses, total_fee, utr_string=""):
     buf = io.BytesIO()
@@ -109,7 +123,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string=""):
     y -= 65
 
     c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, y, "Course Registration-Students Admission for Summer Semester 2025-26")
+    c.drawCentredString(w/2, y, "Course Registration-Students Admission for Semester 2025-26")
     y -= 20
 
     c.setFont("Helvetica-Bold", 10)
@@ -147,27 +161,26 @@ def generate_summer_pdf(student, courses, total_fee, utr_string=""):
     y -= (t1_h + 20)
 
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin, y, "Semester: Summer")
+    c.drawString(margin, y, "Semester Details")
     c.drawRightString(w - margin, y, f"Registration Date: {date.today().strftime('%d-%m-%Y')}")
     y -= 20
 
-    c.drawString(margin, y, "Summer Subjects Registered")
+    c.drawString(margin, y, "Subjects Registered")
     y -= 5
 
-    # 🟢 NEW: PDF now prints "Applied" instead of an empty checkbox
     c_data = [["Subject Code", "Subject Name", "Category / Rule", "Fee (Rs)", "Apply"]]
     for crs in courses:
         fee_str = "5600" if "Rule 1" in crs.get('rule', '') else ("2000/1000" if "Rule 2" in crs.get('rule', '') else "600")
         c_data.append([
             crs['course_code'], 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-            Paragraph(crs.get('rule', ''), getSampleStyleSheet()['Normal']), 
-            fee_str,
+            Paragraph(crs.get('rule', 'Regular Subject'), getSampleStyleSheet()['Normal']), 
+            fee_str if "Rule" in crs.get('rule', '') else "-",
             "Applied" 
         ])
     
     c_data.append(["", "", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "400", ""])
-    c_data.append(["", "", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), str(total_fee), ""])
+    c_data.append(["", "", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), str(total_fee) if total_fee > 0 else "-", ""])
 
     t2 = Table(c_data, colWidths=[70, 185, 150, 70, 50])
     t2.setStyle(TableStyle([
@@ -203,13 +216,12 @@ def generate_summer_pdf(student, courses, total_fee, utr_string=""):
     y -= 12
     p_style = getSampleStyleSheet()['Normal']
     p_style.fontSize = 9
-    decl = Paragraph("The subjects listed in this Course Registration application are the only subjects I wish to apply for Summer Semester. Further, I understand this application overrides any previous Course Registration application I may have submitted.", p_style)
+    decl = Paragraph("The subjects listed in this Course Registration application are the only subjects I wish to apply for this Semester. Further, I understand this application overrides any previous Course Registration application I may have submitted.", p_style)
     decl.wrapOn(c, w - (2*margin), 50)
     _, decl_h = decl.wrap(w - (2*margin), 50)
     decl.drawOn(c, margin, y - decl_h)
     y -= (decl_h + 20)
 
-    # 🟢 NEW: Dynamically prints the entered UTR, or a blank line if none was provided
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, "Transaction ID / UTR:")
     c.setFont("Helvetica", 10)
@@ -353,7 +365,6 @@ def department_dashboard():
         st.warning("⚠️ No active exam cycles are currently open for online registration. Please contact the COE.")
         return
 
-    # 🟢 REMOVED APPROVAL TAB: Kept only Regular and Summer
     tab_reg, tab_summer = st.tabs(["📝 Regular / Backlog Registration", "☀️ Summer Semester Registration"])
     
     # --- REGULAR REGISTRATION ---
@@ -389,12 +400,39 @@ def department_dashboard():
                         supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", target_usn).eq("cycle_id", target_reg_cycle_id).execute()
                         st.success("✅ UTR successfully updated in the database!")
                         st.rerun()
+                        
+                    # 🟢 NEW: PDF Generator for Regular Registration (if already applied)
+                    course_codes = [r['course_code'] for r in reg_data]
+                    crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
+                    c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
+                    
+                    reconstructed_courses = []
+                    for r in reg_data:
+                        reconstructed_courses.append({
+                            'course_code': r['course_code'],
+                            'course_title': c_titles.get(r['course_code'], 'Unknown'),
+                            'rule': 'Regular Subject'
+                        })
+                        
+                    stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
+                    student = stu_res.data[0] if stu_res.data else {'usn': target_usn}
+                    
+                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, 0, current_utr)
+                    st.download_button(
+                        label="🖨️ Re-Download Application PDF",
+                        data=pdf_bytes,
+                        file_name=f"Regular_Application_{target_usn}.pdf",
+                        mime="application/pdf",
+                        type="primary"
+                    )
                 else:
                     stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
                     if not stu_res.data: 
                         st.error("Student not found.")
                     else:
                         stu = stu_res.data[0]
+                        student_scheme = int(stu.get('scheme_batch', 25))
+                        
                         if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
                             st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is marked as DISCONTINUED in the system.")
                         else:
@@ -407,14 +445,35 @@ def department_dashboard():
                             if target_reg_cycle.get('program_type', 'BOTH') not in ['BOTH', prog_type]:
                                 st.error(f"❌ **Program Mismatch:** Student is {prog_type}, but the selected cycle is restricted to {target_reg_cycle.get('program_type')} students.")
                             else:
-                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}**")
+                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**")
                                 
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and c.get('branch_code') in [branch_code, 'COMMON'] and c.get('course_type', 'CORE') == 'CORE']
-                                pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and c.get('branch_code') == branch_code and c.get('course_type') == 'PE']
-                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and c.get('branch_code') != branch_code and c.get('course_type') == 'OE']
+                                # 🟢 Array-based Scheme and Branch Checking
+                                core_courses = [
+                                    c for c in all_courses 
+                                    if c.get('semester_id') == current_sem 
+                                    and branch_match(c.get('branch_code', ''), branch_code)
+                                    and c.get('course_type', 'CORE') == 'CORE'
+                                    and int(c.get('scheme_batch', 25)) == student_scheme
+                                ]
+                                
+                                pe_courses = [
+                                    c for c in all_courses 
+                                    if c.get('semester_id') == current_sem 
+                                    and branch_match(c.get('branch_code', ''), branch_code)
+                                    and c.get('course_type') == 'PE'
+                                    and int(c.get('scheme_batch', 25)) == student_scheme
+                                ]
+                                
+                                oe_courses = [
+                                    c for c in all_courses 
+                                    if c.get('semester_id') == current_sem 
+                                    and not branch_match(c.get('branch_code', ''), branch_code) 
+                                    and c.get('course_type') == 'OE'
+                                    and int(c.get('scheme_batch', 25)) == student_scheme
+                                ]
                                 
                                 st.markdown("### 1. Mandatory Core Subjects")
                                 selected_codes, total_credits = [], 0.0
@@ -440,11 +499,10 @@ def department_dashboard():
                                         
                                 st.info(f"📊 **Total Credits:** {total_credits}")
                                 
-                                # 🟢 NEW: UTR input directly in the registration form
                                 st.markdown("### 3. Payment Details")
                                 target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Enter if paid, or leave blank to update later.")
                                 
-                                if st.button("💾 Submit Registration", type="primary"):
+                                if st.button("💾 Submit Registration & Generate PDF", type="primary"):
                                     payload = [{
                                         "cycle_id": target_reg_cycle_id, 
                                         "usn": target_usn, 
@@ -458,9 +516,22 @@ def department_dashboard():
                                         "utr_number": target_utr.strip()
                                     } for cc in selected_codes]
                                     
-                                    supabase.table("course_registration_online").insert(payload).execute()
-                                    st.success("✅ Application successfully registered!")
-                                    st.rerun()
+                                    try:
+                                        supabase.table("course_registration_online").insert(payload).execute()
+                                        st.success("✅ Application successfully registered!")
+                                        
+                                        pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Subject"} for cc in selected_codes]
+                                        pdf_bytes = generate_summer_pdf(stu, pdf_courses, 0, target_utr)
+                                        
+                                        st.download_button(
+                                            label="🖨️ Download Official Application PDF",
+                                            data=pdf_bytes,
+                                            file_name=f"Regular_Application_{target_usn}.pdf",
+                                            mime="application/pdf",
+                                            type="primary"
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Database Error: {e}")
 
     # --- SUMMER REGISTRATION ---
     with tab_summer:
@@ -486,7 +557,6 @@ def department_dashboard():
                 if is_main:
                     st.error(f"❌ Student '{summer_usn}' is already officially registered in the main COE database for this cycle!")
                 
-                # 🟢 NEW: Missed Download / Re-Download Engine
                 elif is_staged:
                     st.success(f"✅ Student '{summer_usn}' is already registered online for this cycle!")
                     
@@ -494,7 +564,6 @@ def department_dashboard():
                     current_utr = reg_data[0].get('utr_number', '') or ""
                     total_fee = reg_data[0].get('fee_amount', 0)
                     
-                    # 🟢 NEW: UTR Updater
                     col_u1, col_u2 = st.columns([2, 1])
                     new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr)
                     if col_u2.button("Update UTR Record"):
@@ -502,7 +571,6 @@ def department_dashboard():
                         st.success("✅ UTR successfully updated in the database!")
                         st.rerun()
 
-                    # Reconstruct courses for PDF generation
                     course_codes = [r['course_code'] for r in reg_data]
                     crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
                     c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
@@ -526,13 +594,14 @@ def department_dashboard():
                         mime="application/pdf",
                         type="primary"
                     )
-
                 else:
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     if not stu_res.data:
                         st.error("Student not found.")
                     else:
                         student = stu_res.data[0]
+                        student_scheme = int(student.get('scheme_batch', 25))
+                        
                         if str(student.get('status', '')).strip().upper() == 'DISCONTINUED':
                             st.error(f"❌ **Registration Blocked:** Student '{summer_usn}' is marked as DISCONTINUED in the system.")
                         else:
@@ -543,7 +612,7 @@ def department_dashboard():
                             if target_sum_cycle.get('program_type', 'BOTH') not in ['BOTH', prog_type]:
                                 st.error(f"❌ **Program Mismatch:** Student is {prog_type}, but the selected cycle is restricted to {target_sum_cycle.get('program_type')} students.")
                             else:
-                                st.success(f"**{student['full_name']}** | Branch: **{branch_code}** ({prog_type})")
+                                st.success(f"**{student['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Scheme: **{student_scheme}**")
                                 
                                 res = supabase.table("student_results").select("course_code, grade, cie_marks, is_pass, cycle_id").eq("usn", summer_usn).execute()
                                 
@@ -614,7 +683,6 @@ def department_dashboard():
                                                 if rule_1_credits > 0:
                                                     st.success(f"✅ Rule 1 Credits Valid: {rule_1_credits} / 14")
                                                 
-                                                # 🟢 NEW: UTR input field inside the registration process
                                                 st.markdown("### Payment Details")
                                                 target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually on the printed form.")
                                                 
