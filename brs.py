@@ -87,7 +87,6 @@ def branch_match(course_branches_str, student_branch):
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
     return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
 
-# 🟢 NEW: PDF Generator now dynamically prints the correct Academic Year and Exam Type
 def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -132,6 +131,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
 
     photo_io = get_student_photo(student['usn'])
     if photo_io:
+        photo_io.seek(0)
         p_img = RLImage(photo_io, width=55, height=70)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
@@ -150,8 +150,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
-    if not photo_io:
-        style_cmds.append(('SPAN', (4, 0), (4, 1)))
+    if not photo_io: style_cmds.append(('SPAN', (4, 0), (4, 1)))
 
     t1 = Table(s_data, colWidths=[80, 195, 75, 75, 100], rowHeights=[20, 75])
     t1.setStyle(TableStyle(style_cmds))
@@ -297,56 +296,6 @@ def clerk_dashboard():
                 st.success(f"✅ Receipt saved!")
             except Exception as e: st.error("❌ Duplicate UTR or Database Error!")
 
-    st.markdown("---")
-    st.markdown("### 📥 Download Department Reports")
-    filter_option = st.selectbox("Select Time Period", ["Today", "Between Dates", "By Month", "Academic Year"])
-    
-    today = date.today()
-    start_date = today
-    end_date = today
-    report_name_suffix = f"{today}"
-    
-    if filter_option == "Today":
-        start_date = today; end_date = today
-    elif filter_option == "Between Dates":
-        col_d1, col_d2 = st.columns(2)
-        start_date = col_d1.date_input("From Date", today.replace(day=1))
-        end_date = col_d2.date_input("To Date", today)
-        report_name_suffix = f"{start_date}_to_{end_date}"
-    elif filter_option == "By Month":
-        col_m1, col_m2 = st.columns(2)
-        months = list(calendar.month_name)[1:]
-        selected_month = col_m1.selectbox("Month", months, index=today.month - 1)
-        selected_year = col_m2.selectbox("Year", range(today.year + 1, today.year - 5, -1), index=1)
-        month_index = months.index(selected_month) + 1
-        _, last_day = calendar.monthrange(selected_year, month_index)
-        start_date = date(selected_year, month_index, 1)
-        end_date = date(selected_year, month_index, last_day)
-        report_name_suffix = f"{selected_month}_{selected_year}"
-    elif filter_option == "Academic Year":
-        current_year = today.year
-        default_start_year = current_year - 1 if today.month < 8 else current_year
-        academic_years = [f"{y}-{y+1}" for y in range(current_year + 1, current_year - 5, -1)]
-        selected_ay = st.selectbox("Select Academic Year (Aug-Jul)", academic_years, index=1)
-        ay_start_year = int(selected_ay.split("-")[0])
-        ay_end_year = int(selected_ay.split("-")[1])
-        start_date = date(ay_start_year, 8, 1)
-        end_date = date(ay_end_year, 7, 31)
-        report_name_suffix = f"AY_{selected_ay}"
-
-    if st.button("Fetch Report"):
-        try:
-            res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
-            df = pd.DataFrame(res.data)
-            if not df.empty:
-                df = df[['payment_date', 'usn', 'student_name', 'branch', 'payment_type', 'amount', 'utr_number', 'payment_mode', 'college_account', 'entered_by']]
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(label=f"⬇️ Download Report ({filter_option})", data=csv, file_name=f"Dept_Report_{report_name_suffix}.csv", mime="text/csv", type="primary")
-            else:
-                st.info("No records found for the selected period.")
-        except Exception as e:
-            st.error(f"Failed to fetch report: {e}")
-
 # ==========================================
 # VIEW 2: DEPARTMENT PORTAL
 # ==========================================
@@ -354,7 +303,6 @@ def department_dashboard():
     st.title("🏛️ Department Online Course Registration Portal")
     st.markdown(f"Coordinator: **{st.session_state.username}**")
     
-    # 🟢 NEW: Fetch Global Academic Settings dynamically
     try:
         gs_res = supabase.table("global_settings").select("*").execute()
         global_settings = {r['setting_key']: r['setting_value'] for r in gs_res.data}
@@ -381,7 +329,6 @@ def department_dashboard():
                 current_sem = int(stu.get('current_sem', 1))
                 student_scheme = int(stu.get('scheme_batch', 25))
                 
-                # 🟢 Check for existing regular registrations in this specific Academic Year & Semester
                 staging_check = supabase.table("course_registration_online").select("*").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
                 main_check = supabase.table("course_registrations").select("usn").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).execute()
                 
@@ -403,7 +350,6 @@ def department_dashboard():
                         st.success("✅ UTR successfully updated in the database!")
                         st.rerun()
                         
-                    # Reconstruct courses for PDF generation
                     course_codes = [r['course_code'] for r in reg_data]
                     crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
                     c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
@@ -489,13 +435,15 @@ def department_dashboard():
                         target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Enter if paid, or leave blank to update later.")
                         
                         if st.button("💾 Submit Registration & Generate PDF", type="primary"):
+                            
+                            # 🟢 THE FIX: PERFECT PAYLOAD INJECTION
                             payload = [{
-                                # 🟢 NOTE: cycle_id is intentionally omitted for Regular Academic Enrollments
                                 "usn": target_usn, 
                                 "course_code": cc, 
                                 "semester": current_sem, 
                                 "academic_year": active_ay, 
-                                "registration_type": "REGULAR",
+                                "semester_type": active_term, # Fix applied
+                                "registration_type": "REGULAR", # Fix applied
                                 "rule_category": "", 
                                 "fee_amount": 0, 
                                 "payment_status": "PAID", 
@@ -628,7 +576,7 @@ def department_dashboard():
                                         cie = float(r.get('cie_marks', 0))
                                         is_pass = r.get('is_pass', False)
                                         
-                                        if not is_pass and grade not in ['PND', 'FROZEN', '']:
+                                        if not is_pass and grade not in ['PND', 'PENDING', 'FROZEN', '']:
                                             rule = None
                                             
                                             if cie < cie_threshold:
@@ -677,13 +625,16 @@ def department_dashboard():
                                                 target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually on the printed form.")
                                                 
                                                 if st.button("💾 Submit Registration & Generate PDF", type="primary"):
+                                                    
+                                                    # 🟢 THE FIX: PERFECT PAYLOAD INJECTION
                                                     payload = [{
                                                         "cycle_id": target_sum_cycle_id,
                                                         "usn": summer_usn,
                                                         "course_code": c['course_code'],
                                                         "semester": c['semester'],
-                                                        "academic_year": active_ay, 
-                                                        "registration_type": "SUMMER",
+                                                        "academic_year": active_ay,
+                                                        "semester_type": "SUMMER", # Fix applied
+                                                        "registration_type": "SUMMER", # Fix applied
                                                         "rule_category": c['rule'],
                                                         "fee_amount": total_fee,
                                                         "payment_status": "PAID",
