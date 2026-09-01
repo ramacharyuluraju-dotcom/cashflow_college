@@ -297,7 +297,7 @@ def clerk_dashboard():
             except Exception as e: st.error("❌ Duplicate UTR or Database Error!")
 
 # ==========================================
-# VIEW 2: DEPARTMENT PORTAL
+# VIEW 2: DEPARTMENT PORTAL (DUAL-WRITE ENABLED)
 # ==========================================
 def department_dashboard():
     st.title("🏛️ Department Online Course Registration Portal")
@@ -314,9 +314,9 @@ def department_dashboard():
 
     tab_reg, tab_summer = st.tabs(["📝 Regular Course Registration", "☀️ Summer Exam Registration"])
     
-    # --- REGULAR REGISTRATION (DECOUPLED FROM EXAM CYCLES) ---
+    # --- REGULAR REGISTRATION ---
     with tab_reg:
-        st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester\n\n*Students are registered into this academic session independently of exam schedules.*")
+        st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester")
         
         target_usn = st.text_input("Enter Student USN for Registration").strip().upper()
         if target_usn:
@@ -329,16 +329,12 @@ def department_dashboard():
                 current_sem = int(stu.get('current_sem', 1))
                 student_scheme = int(stu.get('scheme_batch', 25))
                 
+                # Check online history to allow PDF re-printing
                 staging_check = supabase.table("course_registration_online").select("*").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
-                main_check = supabase.table("course_registrations").select("usn").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).execute()
-                
                 is_staged = staging_check.data and len(staging_check.data) > 0
-                is_main = main_check.data and len(main_check.data) > 0
                 
-                if is_main:
-                    st.error(f"❌ Student '{target_usn}' is already officially registered in the main COE database for {active_ay} Sem {current_sem}!")
-                elif is_staged:
-                    st.success(f"✅ Student '{target_usn}' is already registered online for this academic term!")
+                if is_staged:
+                    st.success(f"✅ Student '{target_usn}' is already registered online and is LIVE in the COE database!")
                     
                     reg_data = staging_check.data
                     current_utr = reg_data[0].get('utr_number', '') or ""
@@ -383,29 +379,9 @@ def department_dashboard():
                         courses_res = supabase.table("master_courses").select("*").execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        core_courses = [
-                            c for c in all_courses 
-                            if c.get('semester_id') == current_sem 
-                            and branch_match(c.get('branch_code', ''), branch_code)
-                            and c.get('course_type', 'CORE') == 'CORE'
-                            and int(c.get('scheme_batch', 25)) == student_scheme
-                        ]
-                        
-                        pe_courses = [
-                            c for c in all_courses 
-                            if c.get('semester_id') == current_sem 
-                            and branch_match(c.get('branch_code', ''), branch_code)
-                            and c.get('course_type') == 'PE'
-                            and int(c.get('scheme_batch', 25)) == student_scheme
-                        ]
-                        
-                        oe_courses = [
-                            c for c in all_courses 
-                            if c.get('semester_id') == current_sem 
-                            and not branch_match(c.get('branch_code', ''), branch_code) 
-                            and c.get('course_type') == 'OE'
-                            and int(c.get('scheme_batch', 25)) == student_scheme
-                        ]
+                        core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'CORE' and int(c.get('scheme_batch', 25)) == student_scheme]
+                        pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
+                        oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme]
                         
                         st.markdown("### 1. Mandatory Core Subjects")
                         selected_codes, total_credits = [], 0.0
@@ -436,23 +412,37 @@ def department_dashboard():
                         
                         if st.button("💾 Submit Registration & Generate PDF", type="primary"):
                             
-                            # 🟢 THE FIX: PERFECT PAYLOAD INJECTION
-                            payload = [{
+                            # 🟢 DUAL-WRITE PIPELINE: Financial Staging + Instant Academic Sync
+                            payload_staging = [{
                                 "usn": target_usn, 
                                 "course_code": cc, 
                                 "semester": current_sem, 
                                 "academic_year": active_ay, 
-                                "semester_type": active_term, # Fix applied
-                                "registration_type": "REGULAR", # Fix applied
+                                "semester_type": active_term,
+                                "registration_type": "REGULAR", 
                                 "rule_category": "", 
                                 "fee_amount": 0, 
                                 "payment_status": "PAID", 
                                 "utr_number": target_utr.strip()
                             } for cc in selected_codes]
                             
+                            payload_official = [{
+                                "usn": target_usn, 
+                                "course_code": cc, 
+                                "semester": current_sem, 
+                                "academic_year": active_ay, 
+                                "semester_type": active_term,
+                                "registration_type": "REGULAR"
+                            } for cc in selected_codes]
+                            
                             try:
-                                supabase.table("course_registration_online").insert(payload).execute()
-                                st.success("✅ Application successfully registered!")
+                                # Write to Financial receipt history
+                                supabase.table("course_registration_online").insert(payload_staging).execute()
+                                # Clean duplicates and write instantly to COE official records
+                                supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("usn", target_usn).execute()
+                                supabase.table("course_registrations").insert(payload_official).execute()
+                                
+                                st.success("✅ Application successfully registered and sent directly to the COE!")
                                 
                                 pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Subject"} for cc in selected_codes]
                                 pdf_bytes = generate_summer_pdf(stu, pdf_courses, 0, target_utr, academic_year=active_ay, exam_type="Regular")
@@ -467,7 +457,7 @@ def department_dashboard():
                             except Exception as e:
                                 st.error(f"Database Error: {e}")
 
-    # --- SUMMER REGISTRATION (STILL LINKED TO EXAM CYCLE EVENT) ---
+    # --- SUMMER REGISTRATION ---
     with tab_summer:
         try:
             cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type").eq("is_active", True).eq("is_brs_active", True).eq("exam_type", "Summer").execute()
@@ -487,16 +477,12 @@ def department_dashboard():
             summer_usn = st.text_input("Enter USN for Summer Semester Processing").strip().upper()
             
             if summer_usn:
+                # Check online history to allow PDF re-printing
                 staging_check = supabase.table("course_registration_online").select("*").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
-                main_check = supabase.table("course_registrations").select("usn").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
-                
                 is_staged = staging_check.data and len(staging_check.data) > 0
-                is_main = main_check.data and len(main_check.data) > 0
                 
-                if is_main:
-                    st.error(f"❌ Student '{summer_usn}' is already officially registered in the main COE database for this cycle!")
-                elif is_staged:
-                    st.success(f"✅ Student '{summer_usn}' is already registered online for this cycle!")
+                if is_staged:
+                    st.success(f"✅ Student '{summer_usn}' is already registered online and is LIVE in the COE database!")
                     
                     reg_data = staging_check.data
                     current_utr = reg_data[0].get('utr_number', '') or ""
@@ -626,24 +612,39 @@ def department_dashboard():
                                                 
                                                 if st.button("💾 Submit Registration & Generate PDF", type="primary"):
                                                     
-                                                    # 🟢 THE FIX: PERFECT PAYLOAD INJECTION
-                                                    payload = [{
+                                                    # 🟢 DUAL-WRITE PIPELINE: Financial Staging + Instant Academic Sync
+                                                    payload_staging = [{
                                                         "cycle_id": target_sum_cycle_id,
                                                         "usn": summer_usn,
                                                         "course_code": c['course_code'],
                                                         "semester": c['semester'],
                                                         "academic_year": active_ay,
-                                                        "semester_type": "SUMMER", # Fix applied
-                                                        "registration_type": "SUMMER", # Fix applied
+                                                        "semester_type": "SUMMER", 
+                                                        "registration_type": "SUMMER", 
                                                         "rule_category": c['rule'],
                                                         "fee_amount": total_fee,
                                                         "payment_status": "PAID",
                                                         "utr_number": target_utr.strip()
                                                     } for c in selected_summer_courses]
                                                     
+                                                    payload_official = [{
+                                                        "cycle_id": target_sum_cycle_id,
+                                                        "usn": summer_usn,
+                                                        "course_code": c['course_code'],
+                                                        "semester": c['semester'],
+                                                        "academic_year": active_ay,
+                                                        "semester_type": "SUMMER",
+                                                        "registration_type": "SUMMER"
+                                                    } for c in selected_summer_courses]
+                                                    
                                                     try:
-                                                        supabase.table("course_registration_online").insert(payload).execute()
-                                                        st.success(f"✅ Application successfully registered!")
+                                                        # Write to Financial receipt history
+                                                        supabase.table("course_registration_online").insert(payload_staging).execute()
+                                                        # Clean duplicates and write instantly to COE official records
+                                                        supabase.table("course_registrations").delete().eq("cycle_id", target_sum_cycle_id).eq("usn", summer_usn).execute()
+                                                        supabase.table("course_registrations").insert(payload_official).execute()
+                                                        
+                                                        st.success(f"✅ Application successfully registered and sent directly to the COE!")
                                                         
                                                         pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=active_ay, exam_type="Summer")
                                                         st.download_button(
