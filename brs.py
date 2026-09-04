@@ -345,7 +345,6 @@ def department_dashboard():
     with tab_reg:
         st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester")
         
-        # 🟢 NEW: Entry Mode Toggle
         entry_mode = st.radio("Registration Mode:", ["👤 Single Student Entry", "🚀 Bulk Branch Auto-Registration"], horizontal=True)
         st.divider()
         
@@ -379,7 +378,6 @@ def department_dashboard():
                         if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
                             st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is marked as DISCONTINUED.")
                         else:
-                            # 🟢 STRICT ODD/EVEN PROMOTION LOCK
                             is_odd_sem = (current_sem % 2 != 0)
                             is_active_odd = (active_term.upper() == 'ODD')
                             
@@ -401,7 +399,6 @@ def department_dashboard():
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
-                                # 🟢 NO CHECKBOXES FOR CORE COURSES (DEO Error Prevention)
                                 st.markdown("### 1. Mandatory Core Courses")
                                 if not core_courses:
                                     st.warning("No core courses found for this semester.")
@@ -410,7 +407,6 @@ def department_dashboard():
                                     selected_codes.append(core['course_code'])
                                     total_credits += float(core.get('credits', 4))
                                     
-                                # 🟢 ONLY SHOW ELECTIVES IF THEY EXIST
                                 if pe_courses or oe_courses:
                                     st.markdown("### 2. Electives")
                                     col_pe, col_oe = st.columns(2)
@@ -449,7 +445,7 @@ def department_dashboard():
                                         except Exception as e:
                                             st.error(f"Database Error: {e}")
 
-        # 🟢 NEW: BULK AUTO-REGISTRATION MODE
+        # 🟢 BULK AUTO-REGISTRATION MODE
         elif entry_mode == "🚀 Bulk Branch Auto-Registration":
             st.markdown("### Bulk Class Registration Engine")
             col_b1, col_b2, col_b3 = st.columns(3)
@@ -471,11 +467,9 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        # Fetch Students
                         stu_res = supabase.table("master_students").select("usn, status").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         valid_usns = [s['usn'] for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
-                        # Fetch Courses
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
@@ -490,7 +484,6 @@ def department_dashboard():
                         else:
                             st.info(f"👥 Found **{len(valid_usns)} Active Students** eligible for registration.")
                             
-                            # 🟢 SCENARIO A: 100% Core Semester (No Electives) = One Click Auto-Register!
                             if not pe_courses and not oe_courses:
                                 st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. All students take the exact same courses.")
                                 st.markdown("**Courses to be registered:**")
@@ -506,11 +499,9 @@ def department_dashboard():
                                                 payload_official.append({"usn": u, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
                                         
                                         try:
-                                            # Clean Old
                                             for i in range(0, len(valid_usns), 50):
                                                 supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", valid_usns[i:i+50]).execute()
                                             
-                                            # Insert New
                                             for i in range(0, len(payload_staging), 500):
                                                 supabase.table("course_registration_online").insert(payload_staging[i:i+500]).execute()
                                                 supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
@@ -519,7 +510,6 @@ def department_dashboard():
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
                             
-                            # 🟢 SCENARIO B: Electives exist, requires CSV Upload
                             else:
                                 st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each USN to their chosen courses.")
                                 
@@ -559,7 +549,8 @@ def department_dashboard():
     # --- SUMMER REGISTRATION ---
     with tab_summer:
         try:
-            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type").eq("is_active", True).eq("is_brs_active", True).eq("exam_type", "Summer").execute()
+            # 🟢 FIX: Extract 'academic_year' for the cycle to prevent 2026-27 vs 2025-26 mismatch
+            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type, academic_year").eq("is_active", True).eq("is_brs_active", True).eq("exam_type", "Summer").execute()
             summer_cycles = cycles_res.data if cycles_res.data else []
         except:
             summer_cycles = []
@@ -571,6 +562,9 @@ def department_dashboard():
             selected_sum_cycle_name = st.selectbox("Select Target Exam Cycle (Summer):", options=list(sum_cycle_options.keys()))
             target_sum_cycle = sum_cycle_options[selected_sum_cycle_name]
             target_sum_cycle_id = target_sum_cycle['cycle_id']
+            
+            # 🟢 FIX: Fetch specific academic year of the cycle
+            target_sum_ay = target_sum_cycle.get('academic_year', active_ay)
             
             st.subheader("☀️ Summer Semester Application")
             summer_usn = st.text_input("Enter USN for Summer Semester Processing").strip().upper()
@@ -608,7 +602,8 @@ def department_dashboard():
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     student = stu_res.data[0] if stu_res.data else {'usn': summer_usn}
                     
-                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=active_ay, exam_type="Summer")
+                    # 🟢 FIX: Pass target_sum_ay
+                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=target_sum_ay, exam_type="Summer")
                     st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
                 else:
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
@@ -687,8 +682,9 @@ def department_dashboard():
                                                 target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually.")
                                                 
                                                 if st.button("💾 Submit Registration & Generate PDF", type="primary"):
-                                                    payload_staging = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": active_ay, "semester_type": "SUMMER", "registration_type": "SUMMER", "rule_category": c['rule'], "fee_amount": total_fee, "payment_status": "PAID", "utr_number": target_utr.strip()} for c in selected_summer_courses]
-                                                    payload_official = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": active_ay, "semester_type": "SUMMER", "registration_type": "SUMMER"} for c in selected_summer_courses]
+                                                    # 🟢 FIX: Updated the database payloads to use target_sum_ay
+                                                    payload_staging = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": target_sum_ay, "semester_type": "SUMMER", "registration_type": "SUMMER", "rule_category": c['rule'], "fee_amount": total_fee, "payment_status": "PAID", "utr_number": target_utr.strip()} for c in selected_summer_courses]
+                                                    payload_official = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": target_sum_ay, "semester_type": "SUMMER", "registration_type": "SUMMER"} for c in selected_summer_courses]
                                                     
                                                     try:
                                                         supabase.table("course_registration_online").insert(payload_staging).execute()
@@ -696,7 +692,8 @@ def department_dashboard():
                                                         supabase.table("course_registrations").insert(payload_official).execute()
                                                         
                                                         st.success(f"✅ Application successfully registered and sent directly to the COE!")
-                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=active_ay, exam_type="Summer")
+                                                        # 🟢 FIX: Pass target_sum_ay
+                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=target_sum_ay, exam_type="Summer")
                                                         st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
