@@ -122,7 +122,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     y -= 65
 
     c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, y, f"Course Registration Application for {exam_type} Semester {academic_year}")
+    c.drawCentredString(w/2, y, f"Course Registration/ Exam application form- {exam_type} Semester {academic_year}")
     y -= 20
 
     c.setFont("Helvetica-Bold", 10)
@@ -164,33 +164,49 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     c.drawRightString(w - margin, y, f"Registration Date: {date.today().strftime('%d-%m-%Y')}")
     y -= 20
 
-    c.drawString(margin, y, "Subjects Registered")
+    c.drawString(margin, y, "Courses Registered")
     y -= 5
 
-    c_data = [["Subject Code", "Subject Name", "Category / Rule", "Fee (Rs)", "Apply"]]
+    c_data = [["Course Code", "Course Title", "Previous Grade", "Fee (Rs)", "Apply"]]
+    rule2_count = 0
     for crs in courses:
-        fee_str = "5600" if "Rule 1" in crs.get('rule', '') else ("2000/1000" if "Rule 2" in crs.get('rule', '') else "600")
+        rule = crs.get('rule', '')
+        
+        # Determine the Grade & Fee strictly based on the Summer Rules logic
+        if "Rule 1" in rule:
+            fee_str = "5600"
+            prev_grade = "NE"
+        elif "Rule 2" in rule:
+            rule2_count += 1
+            fee_str = "2000" if rule2_count == 1 else "1000"
+            prev_grade = "AB"
+        elif "Rule 3" in rule:
+            fee_str = "600"
+            prev_grade = "F"
+        else:
+            fee_str = "-"
+            prev_grade = crs.get('grade', '-')
+
         c_data.append([
             crs['course_code'], 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-            Paragraph(crs.get('rule', 'Regular Subject'), getSampleStyleSheet()['Normal']), 
-            fee_str if "Rule" in crs.get('rule', '') else "-",
+            prev_grade, 
+            fee_str,
             "Applied" 
         ])
     
     # Only show Summer fees if it is a Summer exam type
     if exam_type.upper() == "SUMMER":
-        c_data.append(["", "", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "400", ""])
-        c_data.append(["", "", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), str(total_fee) if total_fee > 0 else "-", ""])
+        c_data.append(["", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "", "400", ""])
+        c_data.append(["", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), "", str(total_fee) if total_fee > 0 else "-", ""])
 
-    t2 = Table(c_data, colWidths=[70, 185, 150, 70, 50])
+    t2 = Table(c_data, colWidths=[75, 240, 90, 60, 60])
     t2.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('ALIGN', (0,0), (0,-1), 'CENTER'),
-        ('ALIGN', (3,0), (3,-1), 'CENTER'),
-        ('ALIGN', (4,0), (4,-1), 'CENTER'),
+        ('ALIGN', (2,0), (4,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
     t2.wrapOn(c, w, h)
@@ -202,9 +218,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     c.setFont("Helvetica", 9)
     undertakings = [
         "I will follow the AMCEC / VTU autonomy guidelines.",
-        "I have paid the prescribed fee." if exam_type.upper() == "SUMMER" else "I have paid my regular tuition fees.",
-        "I will be regular to theory, laboratory, and academic activities in the campus.",
-        "I will maintain the discipline in the campus."
+        "I have paid the prescribed fee." if exam_type.upper() == "SUMMER" else "I have paid my regular tuition fees."
     ]
     for u in undertakings:
         c.rect(margin, y - 8, 10, 10) 
@@ -212,12 +226,21 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         y -= 18
     y -= 10
     
+    # Rules Note logic for Summer only
+    if exam_type.upper() == "SUMMER":
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(margin, y, "Note - Summer Semester Rules:")
+        y -= 12
+        c.setFont("Helvetica", 8)
+        c.drawString(margin, y, "Rule 1: Mandatory Classes (CIE Fail) | Rule 2: Exam Only (Absent) | Rule 3: Exam Only (SEE Fail / MP)")
+        y -= 18
+
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, "Declaration:")
     y -= 12
     p_style = getSampleStyleSheet()['Normal']
     p_style.fontSize = 9
-    decl = Paragraph("The subjects listed in this Course Registration application are the only subjects I wish to apply for this Semester. Further, I understand this application overrides any previous Course Registration application I may have submitted.", p_style)
+    decl = Paragraph("The courses listed in this application are the only courses I wish to apply for this Examination. Further, I understand this application overrides any previous application I may have submitted.", p_style)
     decl.wrapOn(c, w - (2*margin), 50)
     _, decl_h = decl.wrap(w - (2*margin), 50)
     decl.drawOn(c, margin, y - decl_h)
@@ -348,7 +371,7 @@ def department_dashboard():
                         crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
                         c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
                         
-                        reconstructed_courses = [{'course_code': r['course_code'], 'course_title': c_titles.get(r['course_code'], 'Unknown'), 'rule': 'Regular Subject'} for r in reg_data]
+                        reconstructed_courses = [{'course_code': r['course_code'], 'course_title': c_titles.get(r['course_code'], 'Unknown'), 'rule': 'Regular Course'} for r in reg_data]
                         
                         pdf_bytes = generate_summer_pdf(stu, reconstructed_courses, 0, "", academic_year=active_ay, exam_type="Regular")
                         st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{target_usn}.pdf", mime="application/pdf", type="primary")
@@ -378,10 +401,10 @@ def department_dashboard():
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
-                                # 🟢 NO CHECKBOXES FOR CORE SUBJECTS (DEO Error Prevention)
-                                st.markdown("### 1. Mandatory Core Subjects")
+                                # 🟢 NO CHECKBOXES FOR CORE COURSES (DEO Error Prevention)
+                                st.markdown("### 1. Mandatory Core Courses")
                                 if not core_courses:
-                                    st.warning("No core subjects found for this semester.")
+                                    st.warning("No core courses found for this semester.")
                                 for core in core_courses:
                                     st.markdown(f"- ✅ **{core['course_code']}** - {core['title']} *(Auto-assigned)*")
                                     selected_codes.append(core['course_code'])
@@ -408,7 +431,7 @@ def department_dashboard():
                                 
                                 if st.button("💾 Submit Registration & Generate PDF", type="primary"):
                                     if not selected_codes:
-                                        st.error("❌ **Invalid Submission:** No subjects were selected. Cannot submit an empty registration.")
+                                        st.error("❌ **Invalid Submission:** No courses were selected. Cannot submit an empty registration.")
                                     else:
                                         payload_staging = [{"usn": target_usn, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""} for cc in selected_codes]
                                         payload_official = [{"usn": target_usn, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"} for cc in selected_codes]
@@ -419,7 +442,7 @@ def department_dashboard():
                                             supabase.table("course_registrations").insert(payload_official).execute()
                                             
                                             st.success("✅ Application successfully registered and sent directly to the COE!")
-                                            pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Subject"} for cc in selected_codes]
+                                            pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Course"} for cc in selected_codes]
                                             pdf_bytes = generate_summer_pdf(stu, pdf_courses, 0, "", academic_year=active_ay, exam_type="Regular")
                                             
                                             st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{target_usn}.pdf", mime="application/pdf", type="primary")
@@ -463,14 +486,14 @@ def department_dashboard():
                         if not valid_usns:
                             st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
                         elif not core_courses:
-                            st.warning(f"No Core subjects mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
+                            st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
                         else:
                             st.info(f"👥 Found **{len(valid_usns)} Active Students** eligible for registration.")
                             
                             # 🟢 SCENARIO A: 100% Core Semester (No Electives) = One Click Auto-Register!
                             if not pe_courses and not oe_courses:
-                                st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. All students take the exact same subjects.")
-                                st.markdown("**Subjects to be registered:**")
+                                st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. All students take the exact same courses.")
+                                st.markdown("**Courses to be registered:**")
                                 for c in core_courses:
                                     st.markdown(f"- {c['course_code']} - {c['title']}")
                                 
@@ -492,13 +515,13 @@ def department_dashboard():
                                                 supabase.table("course_registration_online").insert(payload_staging[i:i+500]).execute()
                                                 supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
                                                 
-                                            st.success(f"✅ Successfully registered {len(valid_usns)} students for {len(core_courses)} subjects each!")
+                                            st.success(f"✅ Successfully registered {len(valid_usns)} students for {len(core_courses)} courses each!")
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
                             
                             # 🟢 SCENARIO B: Electives exist, requires CSV Upload
                             else:
-                                st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each USN to their chosen subjects.")
+                                st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each USN to their chosen courses.")
                                 
                                 st.markdown("Please upload a CSV containing only **`usn`** and **`course_code`**. (Include both core and elective codes for each student).")
                                 b_csv = st.file_uploader("Upload Department CSV", type="csv")
