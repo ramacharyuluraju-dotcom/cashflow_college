@@ -308,20 +308,41 @@ def clerk_dashboard():
         other_description = st.text_input("Specify Other Fee", max_chars=12) if payment_type == "Other" else ""
     with col3:
         st.markdown("### Transaction Details")
-        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)"])
+        # 🟢 Added 'SBI Direct' to options
+        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)", "SBI Direct"])
         utr = st.text_input("Transaction ID / UTR No.")
         college_account = st.text_input("Credited To A/C (Bank details)")
         
     if st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True):
         final_payment_type = f"Other - {other_description.strip()}" if payment_type == "Other" else payment_type
-        if not usn or not student_name or not utr or not college_account: st.error("⚠️ Missing mandatory fields!")
-        elif payment_mode == "UPI (QR / App)" and (not utr.isdigit() or len(utr) != 12): st.error("❌ UPI UTR must be 12 digits!")
-        elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not utr.isalnum() or len(utr) != 22): st.error("❌ NEFT UTR must be 22 chars!")
+        clean_utr = utr.strip().upper()
+        
+        if not usn or not student_name or not clean_utr or not college_account: 
+            st.error("⚠️ Missing mandatory fields!")
+        elif payment_mode == "UPI (QR / App)" and (not clean_utr.isdigit() or len(clean_utr) != 12): 
+            st.error("❌ UPI UTR must be 12 digits!")
+        elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not clean_utr.isalnum() or len(clean_utr) != 22): 
+            st.error("❌ NEFT UTR must be 22 characters!")
+        elif payment_mode == "SBI Direct" and not clean_utr.isalnum():
+            # 🟢 Alphanumeric check with no character length restrictions
+            st.error("❌ SBI Direct Transaction ID must be alphanumeric!")
         else:
             try:
-                supabase.table("cash_receipts").insert({"payment_date": str(payment_date), "amount": amount, "utr_number": utr.strip().upper(), "payment_type": final_payment_type, "college_account": college_account.strip(), "payment_mode": payment_mode, "usn": usn.strip().upper(), "student_name": student_name.strip().title(), "branch": branch, "entered_by": st.session_state.username}).execute()
-                st.success(f"✅ Receipt saved!")
-            except Exception as e: st.error("❌ Duplicate UTR or Database Error!")
+                supabase.table("cash_receipts").insert({
+                    "payment_date": str(payment_date), 
+                    "amount": amount, 
+                    "utr_number": clean_utr, 
+                    "payment_type": final_payment_type, 
+                    "college_account": college_account.strip(), 
+                    "payment_mode": payment_mode, 
+                    "usn": usn.strip().upper(), 
+                    "student_name": student_name.strip().title(), 
+                    "branch": branch, 
+                    "entered_by": st.session_state.username
+                }).execute()
+                st.success(f"✅ Receipt saved successfully for {usn.strip().upper()} via {payment_mode}!")
+            except Exception as e: 
+                st.error(f"❌ Duplicate UTR or Database Error: {e}")
 
 # ==========================================
 # VIEW 2: DEPARTMENT PORTAL (DUAL-WRITE ENABLED)
