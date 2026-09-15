@@ -5,6 +5,7 @@ import calendar
 import io
 import re
 from datetime import date, datetime
+from collections import defaultdict
 from supabase import create_client, Client
 from PIL import Image as PILImage
 
@@ -86,6 +87,57 @@ def branch_match(course_branches_str, student_branch):
     if not course_branches_str: return False
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
     return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
+
+# --- NEW: SUMMER FEE REPORT GENERATOR ---
+def generate_summer_fee_report(cycle_id, branch_code=None):
+    # 1. Fetch all online registrations for the specific summer cycle
+    regs_res = supabase.table("course_registration_online").select("*").eq("cycle_id", cycle_id).execute()
+    if not regs_res.data: 
+        return None
+        
+    usns = list(set([r['usn'] for r in regs_res.data]))
+    student_map = {}
+    
+    # 2. Batch fetch student details to get their names and branches
+    for i in range(0, len(usns), 100):
+        chunk = usns[i:i+100]
+        st_res = supabase.table("master_students").select("usn, full_name, branch_code").in_("usn", chunk).execute()
+        if st_res.data:
+            for s in st_res.data:
+                student_map[s['usn']] = s
+                
+    report_data = []
+    grouped = defaultdict(list)
+    for r in regs_res.data:
+        grouped[r['usn']].append(r)
+        
+    # 3. Compile the grouped rows into a single report line per student
+    for usn, courses in grouped.items():
+        stu = student_map.get(usn, {})
+        stu_branch = stu.get('branch_code', 'Unknown')
+        
+        # Filter by branch if requested by a department
+        if branch_code and stu_branch != branch_code:
+            continue 
+            
+        course_codes = ", ".join([c['course_code'] for c in courses])
+        rules = ", ".join([c.get('rule_category', '') for c in courses])
+        
+        # Fee is duplicated across the student's rows; just pull it from the first index
+        total_fee = courses[0].get('fee_amount', 0)
+        utr = courses[0].get('utr_number', '')
+        
+        report_data.append({
+            "USN": usn,
+            "Name": stu.get('full_name', 'Unknown'),
+            "Branch": stu_branch,
+            "Courses Registered": course_codes,
+            "Rules Applied": rules,
+            "Total Fee Payable (Rs)": total_fee,
+            "UTR / Transaction ID": utr
+        })
+        
+    return pd.DataFrame(report_data)
 
 def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     buf = io.BytesIO()
@@ -308,7 +360,6 @@ def clerk_dashboard():
         other_description = st.text_input("Specify Other Fee", max_chars=12) if payment_type == "Other" else ""
     with col3:
         st.markdown("### Transaction Details")
-        # 🟢 Added 'SBI Direct' to options
         payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)", "SBI Direct"])
         utr = st.text_input("Transaction ID / UTR No.")
         college_account = st.text_input("Credited To A/C (Bank details)")
@@ -324,7 +375,6 @@ def clerk_dashboard():
         elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not clean_utr.isalnum() or len(clean_utr) != 22): 
             st.error("❌ NEFT UTR must be 22 characters!")
         elif payment_mode == "SBI Direct" and not clean_utr.isalnum():
-            # 🟢 Alphanumeric check with no character length restrictions
             st.error("❌ SBI Direct Transaction ID must be alphanumeric!")
         else:
             try:
@@ -360,7 +410,7 @@ def department_dashboard():
     active_ay = global_settings.get('active_academic_year', '2026-27')
     active_term = global_settings.get('active_term', 'ODD')
 
-    tab_reg, tab_summer = st.tabs(["📝 Regular Course Registration", "☀️ Summer Exam Registration"])
+    tab_reg, tab_summer, tab_reports = st.tabs(["📝 Regular Course Registration", "☀️ Summer Exam Registration", "📊 Summer Fee Reports"])
     
     # --- REGULAR REGISTRATION ---
     with tab_reg:
@@ -570,7 +620,6 @@ def department_dashboard():
     # --- SUMMER REGISTRATION ---
     with tab_summer:
         try:
-            # 🟢 FIX: Extract 'academic_year' for the cycle to prevent 2026-27 vs 2025-26 mismatch
             cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type, academic_year").eq("is_active", True).eq("is_brs_active", True).eq("exam_type", "Summer").execute()
             summer_cycles = cycles_res.data if cycles_res.data else []
         except:
@@ -584,7 +633,6 @@ def department_dashboard():
             target_sum_cycle = sum_cycle_options[selected_sum_cycle_name]
             target_sum_cycle_id = target_sum_cycle['cycle_id']
             
-            # 🟢 FIX: Fetch specific academic year of the cycle
             target_sum_ay = target_sum_cycle.get('academic_year', active_ay)
             
             st.subheader("☀️ Summer Semester Application")
@@ -623,7 +671,6 @@ def department_dashboard():
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     student = stu_res.data[0] if stu_res.data else {'usn': summer_usn}
                     
-                    # 🟢 FIX: Pass target_sum_ay
                     pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=target_sum_ay, exam_type="Summer")
                     st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
                 else:
@@ -703,7 +750,6 @@ def department_dashboard():
                                                 target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually.")
                                                 
                                                 if st.button("💾 Submit Registration & Generate PDF", type="primary"):
-                                                    # 🟢 FIX: Updated the database payloads to use target_sum_ay
                                                     payload_staging = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": target_sum_ay, "semester_type": "SUMMER", "registration_type": "SUMMER", "rule_category": c['rule'], "fee_amount": total_fee, "payment_status": "PAID", "utr_number": target_utr.strip()} for c in selected_summer_courses]
                                                     payload_official = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": target_sum_ay, "semester_type": "SUMMER", "registration_type": "SUMMER"} for c in selected_summer_courses]
                                                     
@@ -713,18 +759,62 @@ def department_dashboard():
                                                         supabase.table("course_registrations").insert(payload_official).execute()
                                                         
                                                         st.success(f"✅ Application successfully registered and sent directly to the COE!")
-                                                        # 🟢 FIX: Pass target_sum_ay
                                                         pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=target_sum_ay, exam_type="Summer")
                                                         st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
+
+    # --- NEW: DEPARTMENT SUMMER FEE REPORT ---
+    with tab_reports:
+        st.subheader("📊 Summer Semester Registration & Fee Report")
+        st.info("Download a consolidated list of students who have applied for Summer Semester courses through the portal, including their fee amounts and transaction IDs.")
+        
+        try:
+            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name").eq("exam_type", "Summer").execute()
+            summer_cycles = cycles_res.data if cycles_res.data else []
+        except:
+            summer_cycles = []
+            
+        if not summer_cycles:
+            st.warning("No Summer Exam Cycles found in the database.")
+        else:
+            try:
+                branches_data = supabase.table("master_branches").select("branch_code").execute().data
+                branch_list = [b['branch_code'] for b in branches_data if str(b['branch_code']).upper() != 'COMMON']
+            except: 
+                branch_list = []
+                
+            col_r1, col_r2 = st.columns(2)
+            cycle_opts = {c['cycle_name']: c['cycle_id'] for c in summer_cycles}
+            sel_cycle_name = col_r1.selectbox("Select Target Exam Cycle:", list(cycle_opts.keys()), key="dept_rep_cycle")
+            sel_branch = col_r2.selectbox("Filter by Branch:", ["-- All Branches --"] + branch_list, key="dept_rep_branch")
+            
+            if st.button("📥 Generate Department Report", type="primary"):
+                with st.spinner("Compiling fee collection data..."):
+                    df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name], branch_code=sel_branch if sel_branch != "-- All Branches --" else None)
+                    
+                    if df_report is not None and not df_report.empty:
+                        st.success(f"✅ Found {len(df_report)} student records.")
+                        st.dataframe(df_report, use_container_width=True, hide_index=True)
+                        
+                        csv_data = df_report.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="⬇️ Download CSV Report", 
+                            data=csv_data, 
+                            file_name=f"Summer_Fee_Report_{sel_branch}_{sel_cycle_name}.csv", 
+                            mime="text/csv",
+                            type="primary"
+                        )
+                    else:
+                        st.warning("No online summer registrations found for the selected criteria.")
 
 # ==========================================
 # VIEW 3: ADMIN DASHBOARD (SCRUTINY & EXPORT)
 # ==========================================
 def admin_dashboard():
     st.title("📊 Admin Consolidation Panel")
-    tab1, tab2 = st.tabs(["📥 Download Cash Book", "👥 Manage Users"])
+    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "☀️ Summer Fee Reports"])
+    
     with tab1:
         c1, c2 = st.columns(2)
         start_date = c1.date_input("From Date", date.today().replace(day=1))
@@ -736,6 +826,7 @@ def admin_dashboard():
                 st.dataframe(df, use_container_width=True)
                 st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode('utf-8'), f"CashBook_{start_date}_to_{end_date}.csv", "text/csv")
             else: st.info("No records found.")
+            
     with tab2:
         with st.form("create_user_form"):
             new_user = st.text_input("New Username")
@@ -746,6 +837,48 @@ def admin_dashboard():
                     supabase.table("app_users").insert({"username": new_user.lower(), "password_hash": hash_password(new_pass), "role": new_role}).execute()
                     st.success(f"User created with '{new_role}' role.")
                 except: st.error("Error creating user.")
+                
+    # --- NEW: ADMIN INSTITUTIONAL SUMMER FEE REPORT ---
+    with tab3:
+        st.subheader("Download Institutional Summer Fee Report")
+        st.info("Generates a master list of all summer semester registrations across all branches.")
+        try:
+            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name").eq("exam_type", "Summer").execute()
+            summer_cycles = cycles_res.data if cycles_res.data else []
+        except:
+            summer_cycles = []
+            
+        if not summer_cycles:
+            st.warning("No Summer Exam Cycles found in the database.")
+        else:
+            cycle_opts = {c['cycle_name']: c['cycle_id'] for c in summer_cycles}
+            sel_cycle_name = st.selectbox("Select Summer Cycle:", list(cycle_opts.keys()), key="admin_rep_cycle")
+            
+            if st.button("📥 Generate Institutional Report", type="primary"):
+                with st.spinner("Compiling institutional fee collection data..."):
+                    df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name])
+                    
+                    if df_report is not None and not df_report.empty:
+                        # Ensure 'Total Fee Payable (Rs)' is treated as numeric
+                        df_report["Total Fee Payable (Rs)"] = pd.to_numeric(df_report["Total Fee Payable (Rs)"], errors="coerce").fillna(0)
+                        total_collected = df_report["Total Fee Payable (Rs)"].sum()
+                        
+                        c1, c2 = st.columns(2)
+                        c1.metric("Total Students Registered", len(df_report))
+                        c2.metric("Estimated Fee Collection", f"₹ {total_collected:,.2f}")
+                        
+                        st.dataframe(df_report, use_container_width=True, hide_index=True)
+                        
+                        csv_data = df_report.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="⬇️ Download Full Report (CSV)", 
+                            data=csv_data, 
+                            file_name=f"Institutional_Summer_Fees_{sel_cycle_name}.csv", 
+                            mime="text/csv",
+                            type="primary"
+                        )
+                    else:
+                        st.warning("No online summer registrations found for this cycle.")
 
 # ==========================================
 # MAIN ROUTING LOGIC
