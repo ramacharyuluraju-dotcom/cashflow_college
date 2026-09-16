@@ -743,8 +743,18 @@ def department_dashboard():
                                             st.info(f"💰 **Calculated Total Fee (Including Base 400):** ₹{total_fee}")
                                             
                                             rule_1_credits = sum([c['credits'] for c in selected_summer_courses if "Rule 1" in c['rule']])
-                                            if rule_1_credits > 14:
-                                                st.error(f"❌ **Credit Limit Exceeded!** Selected {rule_1_credits} credits under Rule 1. Maximum allowed is **14 Credits**.")
+                                            
+                                            # 🟢 NEW: Admin / Principal Override Option
+                                            allow_extra_credit = st.checkbox(
+                                                "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15)", 
+                                                help="Check this box if the student has special written permission to exceed the standard 14-credit limit."
+                                            )
+                                            
+                                            # Dynamically set the maximum allowed credits based on the checkbox
+                                            max_allowed = 15 if allow_extra_credit else 14
+                                            
+                                            if rule_1_credits > max_allowed:
+                                                st.error(f"❌ **Credit Limit Exceeded!** Selected {rule_1_credits} credits under Rule 1. Maximum allowed is **{max_allowed} Credits**.")
                                             else:
                                                 st.markdown("### Payment Details")
                                                 target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually.")
