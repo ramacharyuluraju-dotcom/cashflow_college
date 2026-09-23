@@ -5,6 +5,7 @@ import calendar
 import io
 import re
 import qrcode
+import zipfile
 from datetime import date, datetime
 from collections import defaultdict
 from supabase import create_client, Client
@@ -47,6 +48,7 @@ if 'logged_in' not in st.session_state:
 # HELPER FUNCTIONS
 # ==========================================
 def format_branch_name(branch_code):
+    """Maps internal 2-letter codes to official branch names for PDF generation."""
     branch_map = {
         "CS": "CSE",
         "CI": "CSE-AIML",
@@ -74,6 +76,13 @@ def get_student_photo(usn):
                 return clean_io
         except: pass
     return None
+
+def sort_courses_by_sequence(course_list):
+    """Sorts courses based on the 3-digit VTU sequence embedded in the code."""
+    def extract_seq(course):
+        match = re.search(r'\d{3}', str(course.get('course_code', '')))
+        return int(match.group()) if match else 999
+    return sorted(course_list, key=extract_seq)
 
 def calculate_summer_fees(courses):
     if not courses: return 0
@@ -143,7 +152,6 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
 # REGULAR SEMESTER PDF GENERATORS
 # ==========================================
 def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
-    """Generates a PDF for a single student."""
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
@@ -243,6 +251,9 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c_data = [["Course code", "Course title", "Credits", "Select"]]
     total_credits = 0.0
     
+    # 🟢 SORT COURSES BY VTU SEQUENCE (101, 102, 103...)
+    courses = sort_courses_by_sequence(courses)
+    
     for crs in courses:
         cred = float(crs.get('credits', 0))
         total_credits += cred
@@ -307,7 +318,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
 
 
 def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1):
-    """Generates a single multi-page PDF containing all students in the batch."""
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
@@ -315,7 +325,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
     w, h = A4
     margin = 35
 
-    # Load shared assets exactly ONCE into memory for massive performance boost
     raw_assets = {}
     for k, f in {"logo": "College_logo.png", "naac": "NAAC_A_Logo.jpg", "watermark": "AMC_watermark.png"}.items():
         try:
@@ -323,7 +332,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             if res: raw_assets[k] = res
         except: pass
 
-    # Cache the generated QR code so we don't recreate it thousands of times
     qr = qrcode.make(PHOTO_BOOTH_URL)
     cached_qr_io = io.BytesIO()
     qr.save(cached_qr_io, format="PNG")
@@ -334,7 +342,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
         courses = item['courses']
         y = h - margin
 
-        # Draw Static Assets from raw bytes
         if "watermark" in raw_assets:
             c.saveState()
             c.setFillAlpha(0.08)
@@ -415,6 +422,9 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
         c_data = [["Course code", "Course title", "Credits", "Select"]]
         total_credits = 0.0
         
+        # 🟢 SORT COURSES BY VTU SEQUENCE
+        courses = sort_courses_by_sequence(courses)
+        
         for crs in courses:
             cred = float(crs.get('credits', 0))
             total_credits += cred
@@ -474,7 +484,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
         c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
         c.drawRightString(w - margin, y, "Signature of the Student")
         
-        c.showPage()  # 🟢 Key part: Finalizes the page and starts a new one for the next student
+        c.showPage()
         
     c.save()
     return buf.getvalue()
@@ -581,6 +591,10 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     y -= 5
 
     c_data = [["Course Code", "Course Title", "Previous Grade", "Fee (Rs)", "Apply"]]
+    
+    # 🟢 SORT COURSES BY VTU SEQUENCE
+    courses = sort_courses_by_sequence(courses)
+    
     rule2_count = 0
     for crs in courses:
         rule = crs.get('rule', '')
@@ -959,7 +973,6 @@ def department_dashboard():
                                                 
                                             st.success(f"✅ Successfully registered {len(valid_stu)} students for {len(core_courses)} courses each!")
                                             
-                                            # 🟢 Generate Single Master PDF
                                             pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
                                             st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
 
@@ -1000,7 +1013,6 @@ def department_dashboard():
                                                     
                                                 st.success(f"✅ Successfully processed CSV and registered {len(csv_ids)} students!")
                                                 
-                                                # 🟢 Generate Single Master PDF for CSV Upload
                                                 st_res = supabase.table("master_students").select("*").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
                                                 missing = [x for x in csv_ids if x not in found_usns]
