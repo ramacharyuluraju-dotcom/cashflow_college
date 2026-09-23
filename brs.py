@@ -125,7 +125,7 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
     return pd.DataFrame(report_data)
 
 # ==========================================
-# NEW: REGULAR SEMESTER PDF GENERATOR
+# REGULAR SEMESTER PDF GENERATOR
 # ==========================================
 def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
     buf = io.BytesIO()
@@ -273,7 +273,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     return buf.getvalue()
 
 # ==========================================
-# SUMMER SEMESTER PDF GENERATOR (UNTOUCHED)
+# SUMMER SEMESTER PDF GENERATOR 
 # ==========================================
 def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     buf = io.BytesIO()
@@ -601,9 +601,17 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
+                                # 🟢 FIX: Define VTU mandatory language course codes that should NEVER be treated as Open Electives
+                                mandatory_lang_codes = ['109', '209', '106', '206'] 
+
+                                def is_vtu_language_course(course_code):
+                                    return any(lang_code in str(course_code) for lang_code in mandatory_lang_codes)
+                                
                                 core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'CORE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
-                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme]
+                                
+                                # 🟢 FIX: Block VTU Language courses from accidentally populating the OE dropdown
+                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme and not is_vtu_language_course(c.get('course_code', ''))]
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
@@ -688,7 +696,9 @@ def department_dashboard():
                         
                         core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'CORE']
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
-                        oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
+                        
+                        # 🟢 FIX: Apply the same exclusion block to the bulk OE detection
+                        oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE' and not any(lang_code in str(c.get('course_code', '')) for lang_code in ['109', '209', '106', '206'])]
                         
                         if not valid_usns:
                             st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
