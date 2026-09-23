@@ -47,7 +47,6 @@ if 'logged_in' not in st.session_state:
 # HELPER FUNCTIONS
 # ==========================================
 def format_branch_name(branch_code):
-    """Maps internal 2-letter codes to official branch names for PDF generation."""
     branch_map = {
         "CS": "CSE",
         "CI": "CSE-AIML",
@@ -59,7 +58,6 @@ def format_branch_name(branch_code):
         "ME": "ME",
         "AE": "AE"
     }
-    # If the branch is in the map, use it. Otherwise, return the original (handles PG branches).
     return branch_map.get(str(branch_code).strip().upper(), str(branch_code).strip().upper())
 
 def get_student_photo(usn):
@@ -188,40 +186,36 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c.drawString(margin, y, "Student Details")
     y -= 5
 
-    # Handles the visual presentation of USN vs Admission Number
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+    formatted_branch = format_branch_name(student.get('branch_code', ''))
 
-    # Photo Box Logic
+    # 🟢 NEW 6-COLUMN PHOTO LAYOUT
+    p_style = getSampleStyleSheet()['Normal']
+    p_style.alignment = 1 
+    p_style.fontSize = 8
+    
     photo_io = get_student_photo(display_id)
     if photo_io:
-        header_photo_text = "Photo"
         photo_io.seek(0)
         p_img = RLImage(photo_io, width=55, height=70)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        photo_content = p_img
+        digital_col = p_img
     else:
-        header_photo_text = "Scan to Upload"
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
         qr.save(qr_io, format="PNG")
         qr_io.seek(0)
-        p_img = RLImage(qr_io, width=60, height=60)
+        p_img = RLImage(qr_io, width=55, height=55)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        
-        p_style = getSampleStyleSheet()['Normal']
-        p_style.alignment = 1 # Center
-        p_style.fontSize = 7
-        blank_box = Paragraph("OR<br/><br/>Stick<br/>Physical Photo", p_style)
-        
-        photo_content = [p_img, blank_box]
+        digital_col = [p_img, Paragraph("Scan to Upload", p_style)]
 
-    formatted_branch = format_branch_name(student.get('branch_code', ''))
-    
+    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+
     s_data = [
-        ["USN / Admin No.", "Student Name", "Branch", "Type", header_photo_text],
-        [display_id, student.get('full_name',''), formatted_branch, "UG", photo_content]
+        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+        [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
     ]
     
     style_cmds = [
@@ -232,7 +226,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[90, 185, 75, 75, 100], rowHeights=[20, 100])
+    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -359,37 +353,35 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     y -= 5
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+    formatted_branch = format_branch_name(student.get('branch_code', ''))
 
+    # 🟢 NEW 6-COLUMN PHOTO LAYOUT
+    p_style = getSampleStyleSheet()['Normal']
+    p_style.alignment = 1 
+    p_style.fontSize = 8
+    
     photo_io = get_student_photo(display_id)
     if photo_io:
-        header_photo_text = "Photo"
         photo_io.seek(0)
         p_img = RLImage(photo_io, width=55, height=70)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        photo_content = p_img
+        digital_col = p_img
     else:
-        header_photo_text = "Scan to Upload"
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
         qr.save(qr_io, format="PNG")
         qr_io.seek(0)
-        p_img = RLImage(qr_io, width=60, height=60)
+        p_img = RLImage(qr_io, width=55, height=55)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        
-        p_style = getSampleStyleSheet()['Normal']
-        p_style.alignment = 1 # Center
-        p_style.fontSize = 7
-        blank_box = Paragraph("OR<br/><br/>Stick<br/>Physical Photo", p_style)
-        
-        photo_content = [p_img, blank_box]
+        digital_col = [p_img, Paragraph("Scan to Upload", p_style)]
 
-    formatted_branch = format_branch_name(student.get('branch_code', ''))
+    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
     s_data = [
-        ["USN / Admin No.", "Student Name", "Branch", "Type", header_photo_text],
-        [display_id, student.get('full_name',''), formatted_branch, "UG", photo_content]
+        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+        [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
     ]
     
     style_cmds = [
@@ -400,7 +392,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[90, 185, 75, 75, 100], rowHeights=[20, 100])
+    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -614,7 +606,6 @@ def department_dashboard():
         if entry_mode == "👤 Single Student Entry":
             target_id = st.text_input("Enter Student USN or Admission Number").strip().upper()
             if target_id:
-                # 🟢 UPDATE: Query logic expanded to check both USN and admission_number
                 stu_res = supabase.table("master_students").select("*").eq("usn", target_id).execute()
                 if not stu_res.data:
                     stu_res = supabase.table("master_students").select("*").eq("admission_number", target_id).execute()
@@ -623,7 +614,6 @@ def department_dashboard():
                     st.error("Student not found in database.")
                 else:
                     stu = stu_res.data[0]
-                    # Ensure we use whichever ID matched to log the registration
                     active_usn_or_admin = stu.get('usn') if pd.notna(stu.get('usn')) and stu.get('usn') != '' else stu.get('admission_number')
                     
                     current_sem = int(stu.get('current_sem', 1))
@@ -667,14 +657,10 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                mandatory_lang_codes = ['109', '209', '106', '206'] 
-
-                                def is_vtu_language_course(course_code):
-                                    return any(lang_code in str(course_code) for lang_code in mandatory_lang_codes)
-                                
+                                # 🟢 REMOVED: VTU Language blocking logic. Trusts database 'course_type' entirely.
                                 core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'CORE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
-                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme and not is_vtu_language_course(c.get('course_code', ''))]
+                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
@@ -751,7 +737,6 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        # Get students ensuring both USN and Admissions Numbers are handled
                         stu_res = supabase.table("master_students").select("usn, admission_number, status").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         valid_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
@@ -760,7 +745,9 @@ def department_dashboard():
                         
                         core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'CORE']
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
-                        oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE' and not any(lang_code in str(c.get('course_code', '')) for lang_code in ['109', '209', '106', '206'])]
+                        
+                        # 🟢 REMOVED: VTU Language blocking logic. Trusts database 'course_type' entirely.
+                        oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
                         
                         if not valid_stu:
                             st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
