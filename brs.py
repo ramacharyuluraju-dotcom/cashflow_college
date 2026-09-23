@@ -60,14 +60,6 @@ def get_student_photo(usn):
         except: pass
     return None
 
-def get_checkbox():
-    t = Table([[""]], colWidths=[12], rowHeights=[12])
-    t.setStyle(TableStyle([
-        ('GRID', (0,0), (-1,-1), 0.8, colors.black),
-        ('BACKGROUND', (0,0), (-1,-1), colors.white)
-    ]))
-    return t
-
 def calculate_summer_fees(courses):
     if not courses: return 0
     base_fee = 400
@@ -88,9 +80,7 @@ def branch_match(course_branches_str, student_branch):
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
     return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
 
-# --- NEW: SUMMER FEE REPORT GENERATOR ---
 def generate_summer_fee_report(cycle_id, branch_code=None):
-    # 1. Fetch all online registrations for the specific summer cycle
     regs_res = supabase.table("course_registration_online").select("*").eq("cycle_id", cycle_id).execute()
     if not regs_res.data: 
         return None
@@ -98,7 +88,6 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
     usns = list(set([r['usn'] for r in regs_res.data]))
     student_map = {}
     
-    # 2. Batch fetch student details to get their names and branches
     for i in range(0, len(usns), 100):
         chunk = usns[i:i+100]
         st_res = supabase.table("master_students").select("usn, full_name, branch_code").in_("usn", chunk).execute()
@@ -111,19 +100,15 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
     for r in regs_res.data:
         grouped[r['usn']].append(r)
         
-    # 3. Compile the grouped rows into a single report line per student
     for usn, courses in grouped.items():
         stu = student_map.get(usn, {})
         stu_branch = stu.get('branch_code', 'Unknown')
         
-        # Filter by branch if requested by a department
         if branch_code and stu_branch != branch_code:
             continue 
             
         course_codes = ", ".join([c['course_code'] for c in courses])
         rules = ", ".join([c.get('rule_category', '') for c in courses])
-        
-        # Fee is duplicated across the student's rows; just pull it from the first index
         total_fee = courses[0].get('fee_amount', 0)
         utr = courses[0].get('utr_number', '')
         
@@ -139,6 +124,157 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
         
     return pd.DataFrame(report_data)
 
+# ==========================================
+# NEW: REGULAR SEMESTER PDF GENERATOR
+# ==========================================
+def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    margin = 35
+    y = h - margin
+
+    assets = {}
+    for k, f in {"logo": "College_logo.png", "naac": "NAAC_A_Logo.jpg", "watermark": "AMC_watermark.png"}.items():
+        try:
+            res = supabase.storage.from_("College_Logos").download(f)
+            if res: assets[k] = io.BytesIO(res)
+        except: pass
+
+    if "watermark" in assets:
+        c.saveState()
+        c.setFillAlpha(0.08)
+        c.drawImage(ImageReader(assets["watermark"]), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
+        c.restoreState()
+
+    if "logo" in assets:
+        c.drawImage(ImageReader(assets["logo"]), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+    if "naac" in assets:
+        c.drawImage(ImageReader(assets["naac"]), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+
+    c.setFont("Helvetica-Bold", 15)
+    c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
+    c.setFont("Helvetica", 9)
+    c.drawCentredString(w/2, y - 15, "AMC Campus, Bannerghatta Road, Bengaluru, Karnataka - 560083")
+    c.drawCentredString(w/2, y - 27, "Autonomous Institution Affiliated to VTU, Belagavi | NAAC A+ Accredited")
+    c.setLineWidth(1)
+    c.line(margin, y - 45, w - margin, y - 45)
+    y -= 65
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(w/2, y, f"Course Registration - {term.upper()} Semester {academic_year}")
+    y -= 20
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, "Student Details")
+    y -= 5
+
+    photo_io = get_student_photo(student['usn'])
+    if photo_io:
+        photo_io.seek(0)
+        p_img = RLImage(photo_io, width=55, height=70)
+        p_img.hAlign = 'CENTER'
+        p_img.vAlign = 'MIDDLE'
+    else:
+        p_img = Paragraph("<para align=center>PHOTO</para>", getSampleStyleSheet()['Normal'])
+
+    branch_code = student.get('branch_code', '')
+    s_data = [
+        ["USN", "Student Name", "Branch", "Type", "Photo"],
+        [student['usn'], student.get('full_name',''), branch_code, "UG", p_img]
+    ]
+    
+    style_cmds = [
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
+    ]
+    if not photo_io: style_cmds.append(('SPAN', (4, 0), (4, 1)))
+
+    t1 = Table(s_data, colWidths=[80, 195, 75, 75, 100], rowHeights=[20, 75])
+    t1.setStyle(TableStyle(style_cmds))
+    t1.wrapOn(c, w, h)
+    _, t1_h = t1.wrap(w, h)
+    t1.drawOn(c, margin, y - t1_h)
+    y -= (t1_h + 20)
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, f"Semester: {current_sem}")
+    y -= 15
+
+    c.drawString(margin, y, "Courses offered")
+    y -= 5
+
+    c_data = [["Course code", "Course title", "Credits", "Select"]]
+    total_credits = 0.0
+    
+    for crs in courses:
+        cred = float(crs.get('credits', 0))
+        total_credits += cred
+        c_data.append([
+            crs.get('course_code', ''), 
+            Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
+            str(int(cred) if cred.is_integer() else cred), 
+            "Yes" 
+        ])
+        
+    c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
+
+    t2 = Table(c_data, colWidths=[80, 300, 60, 60])
+    t2.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('ALIGN', (0,0), (0,-1), 'CENTER'),
+        ('ALIGN', (2,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    t2.wrapOn(c, w, h)
+    _, t2_h = t2.wrap(w, h)
+    t2.drawOn(c, margin, y - t2_h)
+    y -= (t2_h + 20)
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, "STUDENT UNDERTAKING:")
+    y -= 15
+    
+    c.setLineWidth(1)
+    c.setFont("Helvetica", 9)
+    undertakings = [
+        "I will follow the AMCEC/VTU autonomy guidelines.",
+        "I have paid the full tuition fees and examination fees for the current semester.",
+        "I am aware that I must maintain a minimum of 85% attendance to appear for SEE.",
+        "I have verified that my selected credits align with the academic regulations."
+    ]
+    for u in undertakings:
+        c.rect(margin, y - 8, 10, 10) 
+        c.drawString(margin + 18, y - 6, u)
+        y -= 18
+    y -= 10
+    
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, "DECLARATION:")
+    y -= 12
+    p_style = getSampleStyleSheet()['Normal']
+    p_style.fontSize = 9
+    decl = Paragraph("I hereby declare that the information provided is true to the best of my knowledge. I have carefully selected the courses listed above and I request to be registered for the same in the current semester.", p_style)
+    decl.wrapOn(c, w - (2*margin), 50)
+    _, decl_h = decl.wrap(w - (2*margin), 50)
+    decl.drawOn(c, margin, y - decl_h)
+    y -= (decl_h + 30)
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
+    c.drawRightString(w - margin, y, "Signature of the Student")
+    
+    c.save()
+    return buf.getvalue()
+
+# ==========================================
+# SUMMER SEMESTER PDF GENERATOR (UNTOUCHED)
+# ==========================================
 def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -224,7 +360,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     for crs in courses:
         rule = crs.get('rule', '')
         
-        # Determine the Grade & Fee strictly based on the Summer Rules logic
         if "Rule 1" in rule:
             fee_str = "5600"
             prev_grade = "NE"
@@ -247,7 +382,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
             "Applied" 
         ])
     
-    # Only show Summer fees if it is a Summer exam type
     if exam_type.upper() == "SUMMER":
         c_data.append(["", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "", "400", ""])
         c_data.append(["", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), "", str(total_fee) if total_fee > 0 else "-", ""])
@@ -278,7 +412,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         y -= 18
     y -= 10
     
-    # Rules Note logic for Summer only
     if exam_type.upper() == "SUMMER":
         c.setFont("Helvetica-Bold", 9)
         c.drawString(margin, y, "Note - Summer Semester Rules:")
@@ -298,7 +431,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     decl.drawOn(c, margin, y - decl_h)
     y -= (decl_h + 20)
 
-    # Only show UTR block for Summer
     if exam_type.upper() == "SUMMER":
         c.setFont("Helvetica-Bold", 10)
         c.drawString(margin, y, "Transaction ID / UTR:")
@@ -438,12 +570,17 @@ def department_dashboard():
                         st.success(f"✅ Student '{target_usn}' is already registered online and is LIVE in the COE database!")
                         reg_data = staging_check.data
                         course_codes = [r['course_code'] for r in reg_data]
-                        crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
-                        c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
+                        crs_res = supabase.table("master_courses").select("course_code, title, credits").in_("course_code", course_codes).execute()
                         
-                        reconstructed_courses = [{'course_code': r['course_code'], 'course_title': c_titles.get(r['course_code'], 'Unknown'), 'rule': 'Regular Course'} for r in reg_data]
+                        c_info = {c['course_code']: c for c in (crs_res.data or [])}
                         
-                        pdf_bytes = generate_summer_pdf(stu, reconstructed_courses, 0, "", academic_year=active_ay, exam_type="Regular")
+                        reconstructed_courses = [{
+                            'course_code': r['course_code'], 
+                            'course_title': c_info.get(r['course_code'], {}).get('title', 'Unknown'),
+                            'credits': float(c_info.get(r['course_code'], {}).get('credits', 0.0))
+                        } for r in reg_data]
+                        
+                        pdf_bytes = generate_regular_pdf(stu, reconstructed_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
                         st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{target_usn}.pdf", mime="application/pdf", type="primary")
                     else:
                         if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
@@ -509,9 +646,14 @@ def department_dashboard():
                                             supabase.table("course_registrations").insert(payload_official).execute()
                                             
                                             st.success("✅ Application successfully registered and sent directly to the COE!")
-                                            pdf_courses = [{"course_code": cc, "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"), "rule": "Regular Course"} for cc in selected_codes]
-                                            pdf_bytes = generate_summer_pdf(stu, pdf_courses, 0, "", academic_year=active_ay, exam_type="Regular")
                                             
+                                            pdf_courses = [{
+                                                "course_code": cc, 
+                                                "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
+                                                "credits": next((float(c['credits']) for c in all_courses if c['course_code'] == cc), 0.0)
+                                            } for cc in selected_codes]
+                                            
+                                            pdf_bytes = generate_regular_pdf(stu, pdf_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
                                             st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{target_usn}.pdf", mime="application/pdf", type="primary")
                                         except Exception as e:
                                             st.error(f"Database Error: {e}")
@@ -744,13 +886,10 @@ def department_dashboard():
                                             
                                             rule_1_credits = sum([c['credits'] for c in selected_summer_courses if "Rule 1" in c['rule']])
                                             
-                                            # 🟢 NEW: Admin / Principal Override Option
                                             allow_extra_credit = st.checkbox(
                                                 "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15)", 
                                                 help="Check this box if the student has special written permission to exceed the standard 14-credit limit."
                                             )
-                                            
-                                            # Dynamically set the maximum allowed credits based on the checkbox
                                             max_allowed = 15 if allow_extra_credit else 14
                                             
                                             if rule_1_credits > max_allowed:
@@ -774,7 +913,7 @@ def department_dashboard():
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
 
-    # --- NEW: DEPARTMENT SUMMER FEE REPORT ---
+    # --- DEPARTMENT SUMMER FEE REPORT ---
     with tab_reports:
         st.subheader("📊 Summer Semester Registration & Fee Report")
         st.info("Download a consolidated list of students who have applied for Summer Semester courses through the portal, including their fee amounts and transaction IDs.")
@@ -848,7 +987,6 @@ def admin_dashboard():
                     st.success(f"User created with '{new_role}' role.")
                 except: st.error("Error creating user.")
                 
-    # --- NEW: ADMIN INSTITUTIONAL SUMMER FEE REPORT ---
     with tab3:
         st.subheader("Download Institutional Summer Fee Report")
         st.info("Generates a master list of all summer semester registrations across all branches.")
@@ -869,7 +1007,6 @@ def admin_dashboard():
                     df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name])
                     
                     if df_report is not None and not df_report.empty:
-                        # Ensure 'Total Fee Payable (Rs)' is treated as numeric
                         df_report["Total Fee Payable (Rs)"] = pd.to_numeric(df_report["Total Fee Payable (Rs)"], errors="coerce").fillna(0)
                         total_collected = df_report["Total Fee Payable (Rs)"].sum()
                         
