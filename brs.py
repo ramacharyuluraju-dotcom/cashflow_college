@@ -129,7 +129,7 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
 # REGULAR SEMESTER PDF GENERATOR
 # ==========================================
 def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
-    PHOTO_BOOTH_URL = "https://your-photo-booth-url.streamlit.app"  # 🟢 UPDATE THIS URL!
+    PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"  # 🟢 UPDATE THIS URL!
     
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
