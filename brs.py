@@ -4,7 +4,7 @@ import hashlib
 import calendar
 import io
 import re
-import qrcode  # --- NEW: Added for Photo Booth Integration ---
+import qrcode
 from datetime import date, datetime
 from collections import defaultdict
 from supabase import create_client, Client
@@ -46,6 +46,22 @@ if 'logged_in' not in st.session_state:
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
+def format_branch_name(branch_code):
+    """Maps internal 2-letter codes to official branch names for PDF generation."""
+    branch_map = {
+        "CS": "CSE",
+        "CI": "CSE-AIML",
+        "CD": "CSE-DS",
+        "AI": "AIML",
+        "EC": "ECE",
+        "EE": "EEE",
+        "CV": "Civil",
+        "ME": "ME",
+        "AE": "AE"
+    }
+    # If the branch is in the map, use it. Otherwise, return the original (handles PG branches).
+    return branch_map.get(str(branch_code).strip().upper(), str(branch_code).strip().upper())
+
 def get_student_photo(usn):
     clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
     for ext in ['.jpg', '.jpeg', '.png', '.webp', '.JPG']:
@@ -129,7 +145,7 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
 # REGULAR SEMESTER PDF GENERATOR
 # ==========================================
 def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
-    PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"  # 🟢 UPDATE THIS URL!
+    PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -172,27 +188,40 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c.drawString(margin, y, "Student Details")
     y -= 5
 
-    # 🟢 NEW: QR Code Integration for Photo Booth
-    photo_io = get_student_photo(student['usn'])
+    # Handles the visual presentation of USN vs Admission Number
+    display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+
+    # Photo Box Logic
+    photo_io = get_student_photo(display_id)
     if photo_io:
         header_photo_text = "Photo"
         photo_io.seek(0)
         p_img = RLImage(photo_io, width=55, height=70)
+        p_img.hAlign = 'CENTER'
+        p_img.vAlign = 'MIDDLE'
+        photo_content = p_img
     else:
         header_photo_text = "Scan to Upload"
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
         qr.save(qr_io, format="PNG")
         qr_io.seek(0)
-        p_img = RLImage(qr_io, width=65, height=65)
+        p_img = RLImage(qr_io, width=60, height=60)
+        p_img.hAlign = 'CENTER'
+        p_img.vAlign = 'MIDDLE'
         
-    p_img.hAlign = 'CENTER'
-    p_img.vAlign = 'MIDDLE'
+        p_style = getSampleStyleSheet()['Normal']
+        p_style.alignment = 1 # Center
+        p_style.fontSize = 7
+        blank_box = Paragraph("OR<br/><br/>Stick<br/>Physical Photo", p_style)
+        
+        photo_content = [p_img, blank_box]
 
-    branch_code = student.get('branch_code', '')
+    formatted_branch = format_branch_name(student.get('branch_code', ''))
+    
     s_data = [
-        ["USN", "Student Name", "Branch", "Type", header_photo_text],
-        [student['usn'], student.get('full_name',''), branch_code, "UG", p_img]
+        ["USN / Admin No.", "Student Name", "Branch", "Type", header_photo_text],
+        [display_id, student.get('full_name',''), formatted_branch, "UG", photo_content]
     ]
     
     style_cmds = [
@@ -203,7 +232,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[80, 195, 75, 75, 100], rowHeights=[20, 75])
+    t1 = Table(s_data, colWidths=[90, 185, 75, 75, 100], rowHeights=[20, 100])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -253,7 +282,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c.setLineWidth(1)
     c.setFont("Helvetica", 9)
     undertakings = [
-        "I will follow the AMCEC/VTU autonomy guidelines.",
+        "I will strictly follow the AMCEC/VTU autonomy guidelines.",
         "I have paid the full tuition fees and examination fees for the current semester.",
         "I am aware that I must maintain a minimum of 85% attendance to appear for SEE.",
         "I have verified that my selected credits align with the academic regulations."
@@ -286,7 +315,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
 # SUMMER SEMESTER PDF GENERATOR 
 # ==========================================
 def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
-    PHOTO_BOOTH_URL = "https://your-photo-booth-url.streamlit.app"  # 🟢 UPDATE THIS URL!
+    PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -329,26 +358,38 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     c.drawString(margin, y, "Student Details")
     y -= 5
 
-    # 🟢 NEW: QR Code Integration for Photo Booth
-    photo_io = get_student_photo(student['usn'])
+    display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+
+    photo_io = get_student_photo(display_id)
     if photo_io:
         header_photo_text = "Photo"
         photo_io.seek(0)
         p_img = RLImage(photo_io, width=55, height=70)
+        p_img.hAlign = 'CENTER'
+        p_img.vAlign = 'MIDDLE'
+        photo_content = p_img
     else:
         header_photo_text = "Scan to Upload"
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
         qr.save(qr_io, format="PNG")
         qr_io.seek(0)
-        p_img = RLImage(qr_io, width=65, height=65)
+        p_img = RLImage(qr_io, width=60, height=60)
+        p_img.hAlign = 'CENTER'
+        p_img.vAlign = 'MIDDLE'
         
-    p_img.hAlign = 'CENTER'
-    p_img.vAlign = 'MIDDLE'
+        p_style = getSampleStyleSheet()['Normal']
+        p_style.alignment = 1 # Center
+        p_style.fontSize = 7
+        blank_box = Paragraph("OR<br/><br/>Stick<br/>Physical Photo", p_style)
+        
+        photo_content = [p_img, blank_box]
+
+    formatted_branch = format_branch_name(student.get('branch_code', ''))
 
     s_data = [
-        ["USN", "Student Name", "Branch Code", "Student Type", header_photo_text],
-        [student['usn'], student.get('full_name',''), student.get('branch_code',''), "UG", p_img]
+        ["USN / Admin No.", "Student Name", "Branch", "Type", header_photo_text],
+        [display_id, student.get('full_name',''), formatted_branch, "UG", photo_content]
     ]
     
     style_cmds = [
@@ -359,7 +400,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[80, 195, 75, 75, 100], rowHeights=[20, 75])
+    t1 = Table(s_data, colWidths=[90, 185, 75, 75, 100], rowHeights=[20, 100])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -422,7 +463,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     c.setLineWidth(1)
     c.setFont("Helvetica", 9)
     undertakings = [
-        "I will follow the AMCEC / VTU autonomy guidelines.",
+        "I will strictly follow the AMCEC / VTU autonomy guidelines.",
         "I have paid the prescribed fee." if exam_type.upper() == "SUMMER" else "I have paid my regular tuition fees."
     ]
     for u in undertakings:
@@ -571,22 +612,28 @@ def department_dashboard():
         st.divider()
         
         if entry_mode == "👤 Single Student Entry":
-            target_usn = st.text_input("Enter Student USN for Registration").strip().upper()
-            if target_usn:
-                stu_res = supabase.table("master_students").select("*").eq("usn", target_usn).execute()
+            target_id = st.text_input("Enter Student USN or Admission Number").strip().upper()
+            if target_id:
+                # 🟢 UPDATE: Query logic expanded to check both USN and admission_number
+                stu_res = supabase.table("master_students").select("*").eq("usn", target_id).execute()
+                if not stu_res.data:
+                    stu_res = supabase.table("master_students").select("*").eq("admission_number", target_id).execute()
                 
                 if not stu_res.data: 
-                    st.error("Student not found.")
+                    st.error("Student not found in database.")
                 else:
                     stu = stu_res.data[0]
+                    # Ensure we use whichever ID matched to log the registration
+                    active_usn_or_admin = stu.get('usn') if pd.notna(stu.get('usn')) and stu.get('usn') != '' else stu.get('admission_number')
+                    
                     current_sem = int(stu.get('current_sem', 1))
                     student_scheme = int(stu.get('scheme_batch', 25))
                     
-                    staging_check = supabase.table("course_registration_online").select("*").eq("usn", target_usn).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
+                    staging_check = supabase.table("course_registration_online").select("*").eq("usn", active_usn_or_admin).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
                     is_staged = staging_check.data and len(staging_check.data) > 0
                     
                     if is_staged:
-                        st.success(f"✅ Student '{target_usn}' is already registered online and is LIVE in the COE database!")
+                        st.success(f"✅ Student '{active_usn_or_admin}' is already registered online and is LIVE in the COE database!")
                         reg_data = staging_check.data
                         course_codes = [r['course_code'] for r in reg_data]
                         crs_res = supabase.table("master_courses").select("course_code, title, credits").in_("course_code", course_codes).execute()
@@ -600,10 +647,10 @@ def department_dashboard():
                         } for r in reg_data]
                         
                         pdf_bytes = generate_regular_pdf(stu, reconstructed_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
-                        st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{target_usn}.pdf", mime="application/pdf", type="primary")
+                        st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary")
                     else:
                         if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
-                            st.error(f"❌ **Registration Blocked:** Student '{target_usn}' is marked as DISCONTINUED.")
+                            st.error(f"❌ **Registration Blocked:** Student '{active_usn_or_admin}' is marked as DISCONTINUED.")
                         else:
                             is_odd_sem = (current_sem % 2 != 0)
                             is_active_odd = (active_term.upper() == 'ODD')
@@ -661,12 +708,12 @@ def department_dashboard():
                                     if not selected_codes:
                                         st.error("❌ **Invalid Submission:** No courses were selected. Cannot submit an empty registration.")
                                     else:
-                                        payload_staging = [{"usn": target_usn, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""} for cc in selected_codes]
-                                        payload_official = [{"usn": target_usn, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"} for cc in selected_codes]
+                                        payload_staging = [{"usn": active_usn_or_admin, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""} for cc in selected_codes]
+                                        payload_official = [{"usn": active_usn_or_admin, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"} for cc in selected_codes]
                                         
                                         try:
                                             supabase.table("course_registration_online").insert(payload_staging).execute()
-                                            supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("usn", target_usn).execute()
+                                            supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("usn", active_usn_or_admin).execute()
                                             supabase.table("course_registrations").insert(payload_official).execute()
                                             
                                             st.success("✅ Application successfully registered and sent directly to the COE!")
@@ -678,7 +725,7 @@ def department_dashboard():
                                             } for cc in selected_codes]
                                             
                                             pdf_bytes = generate_regular_pdf(stu, pdf_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
-                                            st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{target_usn}.pdf", mime="application/pdf", type="primary")
+                                            st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary")
                                         except Exception as e:
                                             st.error(f"Database Error: {e}")
 
@@ -704,8 +751,9 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        stu_res = supabase.table("master_students").select("usn, status").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
-                        valid_usns = [s['usn'] for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
+                        # Get students ensuring both USN and Admissions Numbers are handled
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        valid_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
@@ -714,12 +762,12 @@ def department_dashboard():
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
                         oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE' and not any(lang_code in str(c.get('course_code', '')) for lang_code in ['109', '209', '106', '206'])]
                         
-                        if not valid_usns:
+                        if not valid_stu:
                             st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
                         elif not core_courses:
                             st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
                         else:
-                            st.info(f"👥 Found **{len(valid_usns)} Active Students** eligible for registration.")
+                            st.info(f"👥 Found **{len(valid_stu)} Active Students** eligible for registration.")
                             
                             if not pe_courses and not oe_courses:
                                 st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. All students take the exact same courses.")
@@ -727,30 +775,33 @@ def department_dashboard():
                                 for c in core_courses:
                                     st.markdown(f"- {c['course_code']} - {c['title']}")
                                 
-                                if st.button(f"🚀 One-Click Auto-Register All {len(valid_usns)} Students", type="primary"):
+                                if st.button(f"🚀 One-Click Auto-Register All {len(valid_stu)} Students", type="primary"):
                                     with st.spinner("Processing massive dual-write insertion..."):
                                         payload_staging, payload_official = [], []
-                                        for u in valid_usns:
+                                        processed_ids = []
+                                        for s in valid_stu:
+                                            active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
+                                            processed_ids.append(active_id)
                                             for c in core_courses:
-                                                payload_staging.append({"usn": u, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
-                                                payload_official.append({"usn": u, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
+                                                payload_staging.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
+                                                payload_official.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
                                         
                                         try:
-                                            for i in range(0, len(valid_usns), 50):
-                                                supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", valid_usns[i:i+50]).execute()
+                                            for i in range(0, len(processed_ids), 50):
+                                                supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", processed_ids[i:i+50]).execute()
                                             
                                             for i in range(0, len(payload_staging), 500):
                                                 supabase.table("course_registration_online").insert(payload_staging[i:i+500]).execute()
                                                 supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
                                                 
-                                            st.success(f"✅ Successfully registered {len(valid_usns)} students for {len(core_courses)} courses each!")
+                                            st.success(f"✅ Successfully registered {len(valid_stu)} students for {len(core_courses)} courses each!")
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
                             
                             else:
-                                st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each USN to their chosen courses.")
+                                st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each student to their chosen courses.")
                                 
-                                st.markdown("Please upload a CSV containing only **`usn`** and **`course_code`**. (Include both core and elective codes for each student).")
+                                st.markdown("Please upload a CSV containing only **`usn`** (or admission number) and **`course_code`**. (Include both core and elective codes for each student).")
                                 b_csv = st.file_uploader("Upload Department CSV", type="csv")
                                 
                                 if b_csv and st.button("🚀 Process Bulk CSV Upload", type="primary"):
@@ -762,7 +813,7 @@ def department_dashboard():
                                     else:
                                         with st.spinner("Processing CSV Dual-Write..."):
                                             payload_staging, payload_official = [], []
-                                            csv_usns = list(set(df['usn'].dropna().str.strip().str.upper()))
+                                            csv_ids = list(set(df['usn'].dropna().astype(str).str.strip().str.upper()))
                                             
                                             for _, row in df.iterrows():
                                                 u = str(row['usn']).strip().upper()
@@ -772,14 +823,14 @@ def department_dashboard():
                                                     payload_official.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
                                             
                                             try:
-                                                for i in range(0, len(csv_usns), 50):
-                                                    supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", csv_usns[i:i+50]).execute()
+                                                for i in range(0, len(csv_ids), 50):
+                                                    supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", csv_ids[i:i+50]).execute()
                                                 
                                                 for i in range(0, len(payload_staging), 500):
                                                     supabase.table("course_registration_online").insert(payload_staging[i:i+500]).execute()
                                                     supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
                                                     
-                                                st.success(f"✅ Successfully processed CSV and registered {len(csv_usns)} students!")
+                                                st.success(f"✅ Successfully processed CSV and registered {len(csv_ids)} students!")
                                             except Exception as e:
                                                 st.error(f"Upload Error: {e}")
 
