@@ -140,9 +140,10 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
     return pd.DataFrame(report_data)
 
 # ==========================================
-# REGULAR SEMESTER PDF GENERATOR
+# REGULAR SEMESTER PDF GENERATORS
 # ==========================================
 def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
+    """Generates a PDF for a single student."""
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
@@ -189,7 +190,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
 
-    # 🟢 NEW 6-COLUMN PHOTO LAYOUT
     p_style = getSampleStyleSheet()['Normal']
     p_style.alignment = 1 
     p_style.fontSize = 8
@@ -255,7 +255,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         
     c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
 
-    t2 = Table(c_data, colWidths=[80, 300, 60, 60])
+    t2 = Table(c_data, colWidths=[110, 305, 55, 55])
     t2.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
@@ -302,6 +302,180 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
     c.drawRightString(w - margin, y, "Signature of the Student")
     
+    c.save()
+    return buf.getvalue()
+
+
+def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1):
+    """Generates a single multi-page PDF containing all students in the batch."""
+    PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
+    
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    margin = 35
+
+    # Load shared assets exactly ONCE into memory for massive performance boost
+    raw_assets = {}
+    for k, f in {"logo": "College_logo.png", "naac": "NAAC_A_Logo.jpg", "watermark": "AMC_watermark.png"}.items():
+        try:
+            res = supabase.storage.from_("College_Logos").download(f)
+            if res: raw_assets[k] = res
+        except: pass
+
+    # Cache the generated QR code so we don't recreate it thousands of times
+    qr = qrcode.make(PHOTO_BOOTH_URL)
+    cached_qr_io = io.BytesIO()
+    qr.save(cached_qr_io, format="PNG")
+    cached_qr_bytes = cached_qr_io.getvalue()
+
+    for item in student_course_list:
+        student = item['student']
+        courses = item['courses']
+        y = h - margin
+
+        # Draw Static Assets from raw bytes
+        if "watermark" in raw_assets:
+            c.saveState()
+            c.setFillAlpha(0.08)
+            c.drawImage(ImageReader(io.BytesIO(raw_assets["watermark"])), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
+            c.restoreState()
+
+        if "logo" in raw_assets:
+            c.drawImage(ImageReader(io.BytesIO(raw_assets["logo"])), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+        if "naac" in raw_assets:
+            c.drawImage(ImageReader(io.BytesIO(raw_assets["naac"])), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+
+        c.setFont("Helvetica-Bold", 15)
+        c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(w/2, y - 15, "AMC Campus, Bannerghatta Road, Bengaluru, Karnataka - 560083")
+        c.drawCentredString(w/2, y - 27, "Autonomous Institution Affiliated to VTU, Belagavi | NAAC A+ Accredited")
+        c.setLineWidth(1)
+        c.line(margin, y - 45, w - margin, y - 45)
+        y -= 65
+
+        c.setFont("Helvetica-Bold", 11)
+        c.drawCentredString(w/2, y, f"Course Registration - {term.upper()} Semester {academic_year}")
+        y -= 20
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, "Student Details")
+        y -= 5
+
+        display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+        formatted_branch = format_branch_name(student.get('branch_code', ''))
+
+        p_style = getSampleStyleSheet()['Normal']
+        p_style.alignment = 1 
+        p_style.fontSize = 8
+        
+        photo_io = get_student_photo(display_id)
+        if photo_io:
+            photo_io.seek(0)
+            p_img = RLImage(photo_io, width=55, height=70)
+            p_img.hAlign = 'CENTER'
+            p_img.vAlign = 'MIDDLE'
+            digital_col = p_img
+        else:
+            p_img = RLImage(io.BytesIO(cached_qr_bytes), width=55, height=55)
+            p_img.hAlign = 'CENTER'
+            p_img.vAlign = 'MIDDLE'
+            digital_col = [p_img, Paragraph("Scan to Upload", p_style)]
+
+        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+            [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+        ]
+        
+        style_cmds = [
+            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
+        ]
+
+        t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
+        t1.setStyle(TableStyle(style_cmds))
+        t1.wrapOn(c, w, h)
+        _, t1_h = t1.wrap(w, h)
+        t1.drawOn(c, margin, y - t1_h)
+        y -= (t1_h + 20)
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, f"Semester: {current_sem}")
+        y -= 15
+
+        c.drawString(margin, y, "Courses offered")
+        y -= 5
+
+        c_data = [["Course code", "Course title", "Credits", "Select"]]
+        total_credits = 0.0
+        
+        for crs in courses:
+            cred = float(crs.get('credits', 0))
+            total_credits += cred
+            c_data.append([
+                crs.get('course_code', ''), 
+                Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
+                str(int(cred) if cred.is_integer() else cred), 
+                "Yes" 
+            ])
+            
+        c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
+
+        t2 = Table(c_data, colWidths=[110, 305, 55, 55])
+        t2.setStyle(TableStyle([
+            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('ALIGN', (0,0), (0,-1), 'CENTER'),
+            ('ALIGN', (2,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        t2.wrapOn(c, w, h)
+        _, t2_h = t2.wrap(w, h)
+        t2.drawOn(c, margin, y - t2_h)
+        y -= (t2_h + 20)
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, "STUDENT UNDERTAKING:")
+        y -= 15
+        
+        c.setLineWidth(1)
+        c.setFont("Helvetica", 9)
+        undertakings = [
+            "I will strictly follow the AMCEC/VTU autonomy guidelines.",
+            "I have paid the full tuition fees and examination fees for the current semester.",
+            "I am aware that I must maintain a minimum of 85% attendance to appear for SEE.",
+            "I have verified that my selected credits align with the academic regulations."
+        ]
+        for u in undertakings:
+            c.rect(margin, y - 8, 10, 10) 
+            c.drawString(margin + 18, y - 6, u)
+            y -= 18
+        y -= 10
+        
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, "DECLARATION:")
+        y -= 12
+        p_style = getSampleStyleSheet()['Normal']
+        p_style.fontSize = 9
+        decl = Paragraph("I hereby declare that the information provided is true to the best of my knowledge. I have carefully selected the courses listed above and I request to be registered for the same in the current semester.", p_style)
+        decl.wrapOn(c, w - (2*margin), 50)
+        _, decl_h = decl.wrap(w - (2*margin), 50)
+        decl.drawOn(c, margin, y - decl_h)
+        y -= (decl_h + 30)
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
+        c.drawRightString(w - margin, y, "Signature of the Student")
+        
+        c.showPage()  # 🟢 Key part: Finalizes the page and starts a new one for the next student
+        
     c.save()
     return buf.getvalue()
 
@@ -355,7 +529,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
 
-    # 🟢 NEW 6-COLUMN PHOTO LAYOUT
     p_style = getSampleStyleSheet()['Normal']
     p_style.alignment = 1 
     p_style.fontSize = 8
@@ -438,7 +611,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         c_data.append(["", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "", "400", ""])
         c_data.append(["", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), "", str(total_fee) if total_fee > 0 else "-", ""])
 
-    t2 = Table(c_data, colWidths=[75, 240, 90, 60, 60])
+    t2 = Table(c_data, colWidths=[110, 205, 90, 60, 60])
     t2.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
@@ -657,7 +830,6 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                # 🟢 REMOVED: VTU Language blocking logic. Trusts database 'course_type' entirely.
                                 core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'CORE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme]
@@ -737,7 +909,7 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         valid_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
@@ -745,8 +917,6 @@ def department_dashboard():
                         
                         core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'CORE']
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
-                        
-                        # 🟢 REMOVED: VTU Language blocking logic. Trusts database 'course_type' entirely.
                         oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
                         
                         if not valid_stu:
@@ -764,14 +934,20 @@ def department_dashboard():
                                 
                                 if st.button(f"🚀 One-Click Auto-Register All {len(valid_stu)} Students", type="primary"):
                                     with st.spinner("Processing massive dual-write insertion..."):
-                                        payload_staging, payload_official = [], []
+                                        payload_staging, payload_official, student_course_payload = [], [], []
                                         processed_ids = []
+                                        
                                         for s in valid_stu:
                                             active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
                                             processed_ids.append(active_id)
+                                            
+                                            pdf_courses = []
                                             for c in core_courses:
                                                 payload_staging.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
                                                 payload_official.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
+                                                pdf_courses.append({"course_code": c['course_code'], "course_title": c['title'], "credits": float(c.get('credits', 0))})
+                                                
+                                            student_course_payload.append({'student': s, 'courses': pdf_courses})
                                         
                                         try:
                                             for i in range(0, len(processed_ids), 50):
@@ -782,6 +958,11 @@ def department_dashboard():
                                                 supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
                                                 
                                             st.success(f"✅ Successfully registered {len(valid_stu)} students for {len(core_courses)} courses each!")
+                                            
+                                            # 🟢 Generate Single Master PDF
+                                            pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
+                                            st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
+
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
                             
@@ -818,6 +999,40 @@ def department_dashboard():
                                                     supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
                                                     
                                                 st.success(f"✅ Successfully processed CSV and registered {len(csv_ids)} students!")
+                                                
+                                                # 🟢 Generate Single Master PDF for CSV Upload
+                                                st_res = supabase.table("master_students").select("*").in_("usn", csv_ids).execute()
+                                                found_usns = [s['usn'] for s in st_res.data]
+                                                missing = [x for x in csv_ids if x not in found_usns]
+                                                if missing:
+                                                    st_res_adm = supabase.table("master_students").select("*").in_("admission_number", missing).execute()
+                                                    st_res.data.extend(st_res_adm.data)
+                                                    
+                                                stu_dict = {}
+                                                for s in st_res.data:
+                                                    if s.get('usn'): stu_dict[s['usn']] = s
+                                                    if s.get('admission_number'): stu_dict[s['admission_number']] = s
+                                                    
+                                                grouped_courses = defaultdict(list)
+                                                for p in payload_staging:
+                                                    grouped_courses[p['usn']].append(p['course_code'])
+                                                    
+                                                student_course_payload = []
+                                                for uid, c_codes in grouped_courses.items():
+                                                    s = stu_dict.get(uid)
+                                                    if not s: continue
+                                                    
+                                                    pdf_courses = [{
+                                                        "course_code": cc, 
+                                                        "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
+                                                        "credits": next((float(c['credits']) for c in all_courses if c['course_code'] == cc), 0.0)
+                                                    } for cc in c_codes]
+                                                    
+                                                    student_course_payload.append({'student': s, 'courses': pdf_courses})
+                                                    
+                                                pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
+                                                st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_CSV.pdf", mime="application/pdf", type="primary")
+
                                             except Exception as e:
                                                 st.error(f"Upload Error: {e}")
 
