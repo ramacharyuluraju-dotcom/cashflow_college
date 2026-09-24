@@ -210,7 +210,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
     
-    # 🟢 NEW UX LOGIC: Extract "001" for the official table if it is a Temporary ID
     if str(display_id).startswith("TMP-"):
         table_display_id = str(display_id).split("-")[-1]
     else:
@@ -223,7 +222,8 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     photo_io = get_student_photo(display_id)
     if photo_io:
         photo_io.seek(0)
-        p_img = RLImage(photo_io, width=55, height=70)
+        # 🟢 INCREASED PHOTO SIZE TO FIT THE NEW ROW HEIGHT
+        p_img = RLImage(photo_io, width=60, height=80)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
@@ -236,7 +236,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         
-        # 🟢 NEW UX LOGIC: Provide explicit User Name & PIN below the QR Code
         pin = student.get('photo_pin', 'XXXX')
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
@@ -256,7 +255,8 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
+    # 🟢 INCREASED ROW HEIGHT FROM 90 TO 115 TO PREVENT QR TEXT OVERLAP
+    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -414,7 +414,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
             formatted_branch = format_branch_name(student.get('branch_code', ''))
 
-            # 🟢 NEW UX LOGIC: Extract "001" for the official table if it is a Temporary ID
             if str(display_id).startswith("TMP-"):
                 table_display_id = str(display_id).split("-")[-1]
             else:
@@ -427,7 +426,8 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             photo_io = batch_photos.get(display_id)
             if photo_io:
                 photo_io.seek(0)
-                p_img = RLImage(photo_io, width=55, height=70)
+                # 🟢 INCREASED PHOTO SIZE TO FIT THE NEW ROW HEIGHT
+                p_img = RLImage(photo_io, width=60, height=80)
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
                 digital_col = p_img
@@ -436,7 +436,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
                 
-                # 🟢 NEW UX LOGIC: Provide explicit User Name & PIN below the QR Code
                 pin = student.get('photo_pin', 'XXXX')
                 login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
                 digital_col = [p_img, Paragraph(login_text, p_style)]
@@ -456,7 +455,8 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
             ]
 
-            t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
+            # 🟢 INCREASED ROW HEIGHT FROM 90 TO 115 TO PREVENT QR TEXT OVERLAP
+            t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
             t1.setStyle(TableStyle(style_cmds))
             t1.wrapOn(c, w, h)
             _, t1_h = t1.wrap(w, h)
@@ -592,7 +592,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
 
-    # 🟢 NEW UX LOGIC: Extract "001" for the official table if it is a Temporary ID
     if str(display_id).startswith("TMP-"):
         table_display_id = str(display_id).split("-")[-1]
     else:
@@ -605,7 +604,8 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     photo_io = get_student_photo(display_id)
     if photo_io:
         photo_io.seek(0)
-        p_img = RLImage(photo_io, width=55, height=70)
+        # 🟢 INCREASED PHOTO SIZE TO FIT THE NEW ROW HEIGHT
+        p_img = RLImage(photo_io, width=60, height=80)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
@@ -618,7 +618,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         
-        # 🟢 NEW UX LOGIC: Provide explicit User Name & PIN below the QR Code
         pin = student.get('photo_pin', 'XXXX')
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
@@ -638,7 +637,8 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
+    # 🟢 INCREASED ROW HEIGHT FROM 90 TO 115 TO PREVENT QR TEXT OVERLAP
+    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
