@@ -52,7 +52,6 @@ def format_branch_name(branch_code):
     branch_map = {"CS": "CSE", "CI": "CSE-AIML", "CD": "CSE-DS", "AI": "AIML", "EC": "ECE", "EE": "EEE", "CV": "Civil", "ME": "ME", "AE": "AE"}
     return branch_map.get(str(branch_code).strip().upper(), str(branch_code).strip().upper())
 
-# 🟢 NEW: Bucket Mapping for fast checking
 def fetch_complete_bucket_map(bucket_name):
     file_map = {}
     limit = 1000; offset = 0
@@ -71,7 +70,6 @@ def fetch_complete_bucket_map(bucket_name):
         except: break
     return file_map
 
-# 🟢 NEW: Concurrent Worker for Batch Downloads
 def download_photo_worker(args):
     usn, file_map = args
     clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
@@ -89,7 +87,6 @@ def download_photo_worker(args):
         except: pass
     return usn, None
 
-# Fallback for Single Document Generation
 def get_student_photo(usn):
     clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
     for ext in ['.jpg', '.jpeg', '.png', '.webp', '.JPG']:
@@ -212,6 +209,12 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
+    
+    # 🟢 NEW UX LOGIC: Extract "001" for the official table if it is a Temporary ID
+    if str(display_id).startswith("TMP-"):
+        table_display_id = str(display_id).split("-")[-1]
+    else:
+        table_display_id = display_id
 
     p_style = getSampleStyleSheet()['Normal']
     p_style.alignment = 1 
@@ -229,17 +232,20 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         qr_io = io.BytesIO()
         qr.save(qr_io, format="PNG")
         qr_io.seek(0)
-        p_img = RLImage(qr_io, width=55, height=55)
+        p_img = RLImage(qr_io, width=50, height=50)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
+        
+        # 🟢 NEW UX LOGIC: Provide explicit User Name & PIN below the QR Code
         pin = student.get('photo_pin', 'XXXX')
-        digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
+        login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
+        digital_col = [p_img, Paragraph(login_text, p_style)]
 
     physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
     s_data = [
         ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-        [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
     ]
     
     style_cmds = [
@@ -330,7 +336,8 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c.save()
     return buf.getvalue()
 
-# 🟢 NEW: CONCURRENT BATCH PDF GENERATOR
+
+# 🟢 BULK PDF GENERATOR
 def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1, progress_bar=None, status_text=None):
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
@@ -353,7 +360,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
     qr.save(cached_qr_io, format="PNG")
     cached_qr_bytes = cached_qr_io.getvalue()
 
-    # 🟢 High-Speed Directory Scan
     if status_text: status_text.info("🔍 Scanning Student Photo database...")
     photo_file_map = fetch_complete_bucket_map("StakeHolders_Photos")
     
@@ -408,6 +414,12 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
             formatted_branch = format_branch_name(student.get('branch_code', ''))
 
+            # 🟢 NEW UX LOGIC: Extract "001" for the official table if it is a Temporary ID
+            if str(display_id).startswith("TMP-"):
+                table_display_id = str(display_id).split("-")[-1]
+            else:
+                table_display_id = display_id
+
             p_style = getSampleStyleSheet()['Normal']
             p_style.alignment = 1 
             p_style.fontSize = 8
@@ -420,17 +432,20 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 p_img.vAlign = 'MIDDLE'
                 digital_col = p_img
             else:
-                p_img = RLImage(io.BytesIO(cached_qr_bytes), width=55, height=55)
+                p_img = RLImage(io.BytesIO(cached_qr_bytes), width=50, height=50)
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
+                
+                # 🟢 NEW UX LOGIC: Provide explicit User Name & PIN below the QR Code
                 pin = student.get('photo_pin', 'XXXX')
-                digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
+                login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
+                digital_col = [p_img, Paragraph(login_text, p_style)]
 
             physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
             s_data = [
                 ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-                [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+                [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
             ]
             
             style_cmds = [
@@ -523,7 +538,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
         if progress_bar:
             progress_bar.progress(min((i + BATCH_SIZE) / total, 1.0))
 
-        # 🟢 MEMORY FLUSH: Clear the photo streams to prevent server crashes
         for stream in batch_photos.values(): stream.close()
         batch_photos.clear()
         
@@ -578,6 +592,12 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
 
+    # 🟢 NEW UX LOGIC: Extract "001" for the official table if it is a Temporary ID
+    if str(display_id).startswith("TMP-"):
+        table_display_id = str(display_id).split("-")[-1]
+    else:
+        table_display_id = display_id
+
     p_style = getSampleStyleSheet()['Normal']
     p_style.alignment = 1 
     p_style.fontSize = 8
@@ -594,17 +614,20 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         qr_io = io.BytesIO()
         qr.save(qr_io, format="PNG")
         qr_io.seek(0)
-        p_img = RLImage(qr_io, width=55, height=55)
+        p_img = RLImage(qr_io, width=50, height=50)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
+        
+        # 🟢 NEW UX LOGIC: Provide explicit User Name & PIN below the QR Code
         pin = student.get('photo_pin', 'XXXX')
-        digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
+        login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
+        digital_col = [p_img, Paragraph(login_text, p_style)]
 
     physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
     s_data = [
         ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-        [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
     ]
     
     style_cmds = [
@@ -993,7 +1016,6 @@ def department_dashboard():
                                             } for cc in c_codes]
                                             student_course_payload.append({'student': s, 'courses': pdf_courses})
                                             
-                                    # 🟢 SPINNER: Track UI visual state during reconstruction
                                     status_text = st.empty()
                                     progress_bar = st.progress(0)
                                     
@@ -1040,7 +1062,6 @@ def department_dashboard():
                                             st.error(f"Bulk Registration Error: {e}")
                                             st.stop() 
 
-                                    # 🟢 SPINNER: Concurrent PDF engine state
                                     status_text = st.empty()
                                     progress_bar = st.progress(0)
                                     
@@ -1087,7 +1108,6 @@ def department_dashboard():
                                                 st.error(f"Upload Error: {e}")
                                                 st.stop()
 
-                                        # 🟢 Data Parsing & Passing to PDF Engine
                                         with st.spinner("🗂️ Gathering student database records..."):
                                             try:
                                                 st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("usn", csv_ids).execute()
@@ -1122,7 +1142,6 @@ def department_dashboard():
                                                 st.error(f"Data mapping error: {e}")
                                                 st.stop()
                                         
-                                        # 🟢 SPINNER: Concurrent PDF engine state
                                         status_text = st.empty()
                                         progress_bar = st.progress(0)
                                         
