@@ -47,17 +47,7 @@ if 'logged_in' not in st.session_state:
 # HELPER FUNCTIONS
 # ==========================================
 def format_branch_name(branch_code):
-    branch_map = {
-        "CS": "CSE",
-        "CI": "CSE-AIML",
-        "CD": "CSE-DS",
-        "AI": "AIML",
-        "EC": "ECE",
-        "EE": "EEE",
-        "CV": "Civil",
-        "ME": "ME",
-        "AE": "AE"
-    }
+    branch_map = {"CS": "CSE", "CI": "CSE-AIML", "CD": "CSE-DS", "AI": "AIML", "EC": "ECE", "EE": "EEE", "CV": "Civil", "ME": "ME", "AE": "AE"}
     return branch_map.get(str(branch_code).strip().upper(), str(branch_code).strip().upper())
 
 def get_student_photo(usn):
@@ -87,13 +77,11 @@ def calculate_summer_fees(courses):
     total = base_fee
     rule2_count = 0
     for c in courses:
-        if "Rule 1" in c.get('rule', ''):
-            total += 5600
+        if "Rule 1" in c.get('rule', ''): total += 5600
         elif "Rule 2" in c.get('rule', ''):
             rule2_count += 1
             total += 2000 if rule2_count == 1 else 1000
-        elif "Rule 3" in c.get('rule', ''):
-            total += 600
+        elif "Rule 3" in c.get('rule', ''): total += 600
     return total
 
 def branch_match(course_branches_str, student_branch):
@@ -103,8 +91,7 @@ def branch_match(course_branches_str, student_branch):
 
 def generate_summer_fee_report(cycle_id, branch_code=None):
     regs_res = supabase.table("course_registration_online").select("*").eq("cycle_id", cycle_id).execute()
-    if not regs_res.data: 
-        return None
+    if not regs_res.data: return None
         
     usns = list(set([r['usn'] for r in regs_res.data]))
     student_map = {}
@@ -113,20 +100,17 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
         chunk = usns[i:i+100]
         st_res = supabase.table("master_students").select("usn, full_name, branch_code").in_("usn", chunk).execute()
         if st_res.data:
-            for s in st_res.data:
-                student_map[s['usn']] = s
+            for s in st_res.data: student_map[s['usn']] = s
                 
     report_data = []
     grouped = defaultdict(list)
-    for r in regs_res.data:
-        grouped[r['usn']].append(r)
+    for r in regs_res.data: grouped[r['usn']].append(r)
         
     for usn, courses in grouped.items():
         stu = student_map.get(usn, {})
         stu_branch = stu.get('branch_code', 'Unknown')
         
-        if branch_code and stu_branch != branch_code:
-            continue 
+        if branch_code and stu_branch != branch_code: continue 
             
         course_codes = ", ".join([c['course_code'] for c in courses])
         rules = ", ".join([c.get('rule_category', '') for c in courses])
@@ -134,13 +118,9 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
         utr = courses[0].get('utr_number', '')
         
         report_data.append({
-            "USN": usn,
-            "Name": stu.get('full_name', 'Unknown'),
-            "Branch": stu_branch,
-            "Courses Registered": course_codes,
-            "Rules Applied": rules,
-            "Total Fee Payable (Rs)": total_fee,
-            "UTR / Transaction ID": utr
+            "USN": usn, "Name": stu.get('full_name', 'Unknown'), "Branch": stu_branch,
+            "Courses Registered": course_codes, "Rules Applied": rules,
+            "Total Fee Payable (Rs)": total_fee, "UTR / Transaction ID": utr
         })
         
     return pd.DataFrame(report_data)
@@ -170,10 +150,8 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         c.drawImage(ImageReader(assets["watermark"]), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
         c.restoreState()
 
-    if "logo" in assets:
-        c.drawImage(ImageReader(assets["logo"]), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
-    if "naac" in assets:
-        c.drawImage(ImageReader(assets["naac"]), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+    if "logo" in assets: c.drawImage(ImageReader(assets["logo"]), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+    if "naac" in assets: c.drawImage(ImageReader(assets["naac"]), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
 
     c.setFont("Helvetica-Bold", 15)
     c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
@@ -214,7 +192,9 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         p_img = RLImage(qr_io, width=55, height=55)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        digital_col = [p_img, Paragraph("Scan to Upload", p_style)]
+        # 🟢 PIN ADDED TO PDF
+        pin = student.get('photo_pin', 'XXXX')
+        digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
     physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
@@ -256,8 +236,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         c_data.append([
             crs.get('course_code', ''), 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-            str(int(cred) if cred.is_integer() else cred), 
-            "Yes" 
+            str(int(cred) if cred.is_integer() else cred), "Yes" 
         ])
         
     c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
@@ -344,10 +323,8 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             c.drawImage(ImageReader(io.BytesIO(raw_assets["watermark"])), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
             c.restoreState()
 
-        if "logo" in raw_assets:
-            c.drawImage(ImageReader(io.BytesIO(raw_assets["logo"])), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
-        if "naac" in raw_assets:
-            c.drawImage(ImageReader(io.BytesIO(raw_assets["naac"])), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+        if "logo" in raw_assets: c.drawImage(ImageReader(io.BytesIO(raw_assets["logo"])), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+        if "naac" in raw_assets: c.drawImage(ImageReader(io.BytesIO(raw_assets["naac"])), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
 
         c.setFont("Helvetica-Bold", 15)
         c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
@@ -384,7 +361,9 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             p_img = RLImage(io.BytesIO(cached_qr_bytes), width=55, height=55)
             p_img.hAlign = 'CENTER'
             p_img.vAlign = 'MIDDLE'
-            digital_col = [p_img, Paragraph("Scan to Upload", p_style)]
+            # 🟢 PIN ADDED TO PDF
+            pin = student.get('photo_pin', 'XXXX')
+            digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
         physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
@@ -426,8 +405,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             c_data.append([
                 crs.get('course_code', ''), 
                 Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-                str(int(cred) if cred.is_integer() else cred), 
-                "Yes" 
+                str(int(cred) if cred.is_integer() else cred), "Yes" 
             ])
             
         c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
@@ -509,10 +487,8 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         c.drawImage(ImageReader(assets["watermark"]), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
         c.restoreState()
 
-    if "logo" in assets:
-        c.drawImage(ImageReader(assets["logo"]), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
-    if "naac" in assets:
-        c.drawImage(ImageReader(assets["naac"]), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+    if "logo" in assets: c.drawImage(ImageReader(assets["logo"]), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+    if "naac" in assets: c.drawImage(ImageReader(assets["naac"]), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
 
     c.setFont("Helvetica-Bold", 15)
     c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
@@ -553,7 +529,9 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         p_img = RLImage(qr_io, width=55, height=55)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        digital_col = [p_img, Paragraph("Scan to Upload", p_style)]
+        # 🟢 PIN ADDED TO PDF
+        pin = student.get('photo_pin', 'XXXX')
+        digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
     physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
@@ -592,27 +570,17 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     rule2_count = 0
     for crs in courses:
         rule = crs.get('rule', '')
-        
-        if "Rule 1" in rule:
-            fee_str = "5600"
-            prev_grade = "NE"
+        if "Rule 1" in rule: fee_str, prev_grade = "5600", "NE"
         elif "Rule 2" in rule:
             rule2_count += 1
-            fee_str = "2000" if rule2_count == 1 else "1000"
-            prev_grade = "AB"
-        elif "Rule 3" in rule:
-            fee_str = "600"
-            prev_grade = "F"
-        else:
-            fee_str = "-"
-            prev_grade = crs.get('grade', '-')
+            fee_str, prev_grade = ("2000" if rule2_count == 1 else "1000"), "AB"
+        elif "Rule 3" in rule: fee_str, prev_grade = "600", "F"
+        else: fee_str, prev_grade = "-", crs.get('grade', '-')
 
         c_data.append([
             crs['course_code'], 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-            prev_grade, 
-            fee_str,
-            "Applied" 
+            prev_grade, fee_str, "Applied" 
         ])
     
     if exam_type.upper() == "SUMMER":
@@ -668,10 +636,8 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         c.setFont("Helvetica-Bold", 10)
         c.drawString(margin, y, "Transaction ID / UTR:")
         c.setFont("Helvetica", 10)
-        if utr_string and utr_string.strip():
-            c.drawString(margin + 120, y, utr_string.strip())
-        else:
-            c.drawString(margin + 120, y, "__________________________________________________")
+        if utr_string and utr_string.strip(): c.drawString(margin + 120, y, utr_string.strip())
+        else: c.drawString(margin + 120, y, "__________________________________________________")
         y -= 30
 
     c.setFont("Helvetica-Bold", 10)
@@ -919,7 +885,7 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         valid_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
@@ -936,7 +902,6 @@ def department_dashboard():
                         else:
                             st.info(f"👥 Found **{len(valid_stu)} Active Students** eligible for registration.")
                             
-                            # 🟢 Check for existing bulk registrations to allow safe Re-Download
                             active_ids = [s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number') for s in valid_stu]
                             staging_check = supabase.table("course_registration_online").select("usn, course_code").eq("academic_year", active_ay).eq("semester", b_sem).eq("registration_type", "REGULAR").in_("usn", active_ids).execute()
                             registered_data = staging_check.data or []
@@ -1041,11 +1006,11 @@ def department_dashboard():
                                                     
                                                 st.success(f"✅ Successfully processed CSV and registered {len(csv_ids)} students!")
                                                 
-                                                st_res = supabase.table("master_students").select("*").in_("usn", csv_ids).execute()
+                                                st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
                                                 missing = [x for x in csv_ids if x not in found_usns]
                                                 if missing:
-                                                    st_res_adm = supabase.table("master_students").select("*").in_("admission_number", missing).execute()
+                                                    st_res_adm = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("admission_number", missing).execute()
                                                     st_res.data.extend(st_res_adm.data)
                                                     
                                                 stu_dict = {}
