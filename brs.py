@@ -192,7 +192,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         p_img = RLImage(qr_io, width=55, height=55)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        # 🟢 PIN ADDED TO PDF
         pin = student.get('photo_pin', 'XXXX')
         digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
@@ -361,7 +360,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             p_img = RLImage(io.BytesIO(cached_qr_bytes), width=55, height=55)
             p_img.hAlign = 'CENTER'
             p_img.vAlign = 'MIDDLE'
-            # 🟢 PIN ADDED TO PDF
             pin = student.get('photo_pin', 'XXXX')
             digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
@@ -529,7 +527,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         p_img = RLImage(qr_io, width=55, height=55)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
-        # 🟢 PIN ADDED TO PDF
         pin = student.get('photo_pin', 'XXXX')
         digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
@@ -938,38 +935,43 @@ def department_dashboard():
                                     st.markdown(f"- {c['course_code']} - {c['title']}")
                                 
                                 if st.button(f"🚀 One-Click Auto-Register All {len(valid_stu)} Students", type="primary"):
-                                    with st.spinner("Processing massive dual-write insertion..."):
-                                        payload_staging, payload_official, student_course_payload = [], [], []
-                                        processed_ids = []
+                                    payload_staging, payload_official, student_course_payload = [], [], []
+                                    processed_ids = []
+                                    
+                                    for s in valid_stu:
+                                        active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
+                                        processed_ids.append(active_id)
                                         
-                                        for s in valid_stu:
-                                            active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
-                                            processed_ids.append(active_id)
+                                        pdf_courses = []
+                                        for c in core_courses:
+                                            payload_staging.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
+                                            payload_official.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
+                                            pdf_courses.append({"course_code": c['course_code'], "course_title": c['title'], "credits": float(c.get('credits', 0))})
                                             
-                                            pdf_courses = []
-                                            for c in core_courses:
-                                                payload_staging.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
-                                                payload_official.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
-                                                pdf_courses.append({"course_code": c['course_code'], "course_title": c['title'], "credits": float(c.get('credits', 0))})
-                                                
-                                            student_course_payload.append({'student': s, 'courses': pdf_courses})
-                                        
+                                        student_course_payload.append({'student': s, 'courses': pdf_courses})
+                                    
+                                    # 🟢 SPINNER 1: Highly optimized Database Insertion
+                                    with st.spinner(f"☁️ Syncing {len(payload_staging) * 2} records to the COE Cloud Database..."):
                                         try:
-                                            for i in range(0, len(processed_ids), 50):
-                                                supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", processed_ids[i:i+50]).execute()
-                                                supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", processed_ids[i:i+50]).execute()
+                                            # Increased chunk sizes from 50 to 200 for faster deletions
+                                            for i in range(0, len(processed_ids), 200):
+                                                supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", processed_ids[i:i+200]).execute()
+                                                supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", processed_ids[i:i+200]).execute()
                                             
-                                            for i in range(0, len(payload_staging), 500):
-                                                supabase.table("course_registration_online").insert(payload_staging[i:i+500]).execute()
-                                                supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
+                                            # Increased chunk sizes from 500 to 1000 for fewer API calls
+                                            for i in range(0, len(payload_staging), 1000):
+                                                supabase.table("course_registration_online").insert(payload_staging[i:i+1000]).execute()
+                                                supabase.table("course_registrations").insert(payload_official[i:i+1000]).execute()
                                                 
-                                            st.success(f"✅ Successfully registered {len(valid_stu)} students for {len(core_courses)} courses each!")
-                                            
-                                            pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
-                                            st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
-
+                                            st.success(f"✅ Cloud Sync Complete! Registered {len(valid_stu)} students for {len(core_courses)} courses.")
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
+                                            st.stop() # Stop here if DB fails
+
+                                    # 🟢 SPINNER 2: Separated PDF Generation Engine
+                                    with st.spinner(f"🖨️ Rendering {len(valid_stu)}-page Master PDF... This will take a moment for large branches."):
+                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
+                                        st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
                             
                             else:
                                 st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each student to their chosen courses.")
@@ -984,28 +986,35 @@ def department_dashboard():
                                     if 'usn' not in df.columns or 'course_code' not in df.columns:
                                         st.error("CSV must contain 'usn' and 'course_code' columns.")
                                     else:
-                                        with st.spinner("Processing CSV Dual-Write..."):
-                                            payload_staging, payload_official = [], []
-                                            csv_ids = list(set(df['usn'].dropna().astype(str).str.strip().str.upper()))
-                                            
-                                            for _, row in df.iterrows():
-                                                u = str(row['usn']).strip().upper()
-                                                cc = str(row['course_code']).strip().upper()
-                                                if u and cc:
-                                                    payload_staging.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
-                                                    payload_official.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
-                                            
+                                        payload_staging, payload_official = [], []
+                                        csv_ids = list(set(df['usn'].dropna().astype(str).str.strip().str.upper()))
+                                        
+                                        for _, row in df.iterrows():
+                                            u = str(row['usn']).strip().upper()
+                                            cc = str(row['course_code']).strip().upper()
+                                            if u and cc:
+                                                payload_staging.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
+                                                payload_official.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
+                                        
+                                        # 🟢 SPINNER 1: Database Operations
+                                        with st.spinner(f"☁️ Syncing {len(payload_staging) * 2} rows from CSV to Cloud Database..."):
                                             try:
-                                                for i in range(0, len(csv_ids), 50):
-                                                    supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", csv_ids[i:i+50]).execute()
-                                                    supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", csv_ids[i:i+50]).execute()
+                                                for i in range(0, len(csv_ids), 200):
+                                                    supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", csv_ids[i:i+200]).execute()
+                                                    supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", csv_ids[i:i+200]).execute()
                                                 
-                                                for i in range(0, len(payload_staging), 500):
-                                                    supabase.table("course_registration_online").insert(payload_staging[i:i+500]).execute()
-                                                    supabase.table("course_registrations").insert(payload_official[i:i+500]).execute()
+                                                for i in range(0, len(payload_staging), 1000):
+                                                    supabase.table("course_registration_online").insert(payload_staging[i:i+1000]).execute()
+                                                    supabase.table("course_registrations").insert(payload_official[i:i+1000]).execute()
                                                     
                                                 st.success(f"✅ Successfully processed CSV and registered {len(csv_ids)} students!")
-                                                
+                                            except Exception as e:
+                                                st.error(f"Upload Error: {e}")
+                                                st.stop()
+
+                                        # 🟢 SPINNER 2: PDF Operations
+                                        with st.spinner("🖨️ Gathering student data and Rendering Master PDF..."):
+                                            try:
                                                 st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
                                                 missing = [x for x in csv_ids if x not in found_usns]
@@ -1037,9 +1046,8 @@ def department_dashboard():
                                                     
                                                 pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
                                                 st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_CSV.pdf", mime="application/pdf", type="primary")
-
                                             except Exception as e:
-                                                st.error(f"Upload Error: {e}")
+                                                st.error(f"PDF Rendering Error: {e}")
 
     # --- SUMMER REGISTRATION ---
     with tab_summer:
