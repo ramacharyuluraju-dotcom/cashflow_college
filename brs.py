@@ -222,7 +222,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     photo_io = get_student_photo(display_id)
     if photo_io:
         photo_io.seek(0)
-        # 🟢 INCREASED PHOTO SIZE TO FIT THE NEW ROW HEIGHT
         p_img = RLImage(photo_io, width=60, height=80)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
@@ -255,7 +254,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    # 🟢 INCREASED ROW HEIGHT FROM 90 TO 115 TO PREVENT QR TEXT OVERLAP
     t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
@@ -426,7 +424,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             photo_io = batch_photos.get(display_id)
             if photo_io:
                 photo_io.seek(0)
-                # 🟢 INCREASED PHOTO SIZE TO FIT THE NEW ROW HEIGHT
                 p_img = RLImage(photo_io, width=60, height=80)
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
@@ -455,7 +452,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
             ]
 
-            # 🟢 INCREASED ROW HEIGHT FROM 90 TO 115 TO PREVENT QR TEXT OVERLAP
             t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
             t1.setStyle(TableStyle(style_cmds))
             t1.wrapOn(c, w, h)
@@ -604,7 +600,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     photo_io = get_student_photo(display_id)
     if photo_io:
         photo_io.seek(0)
-        # 🟢 INCREASED PHOTO SIZE TO FIT THE NEW ROW HEIGHT
         p_img = RLImage(photo_io, width=60, height=80)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
@@ -637,7 +632,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    # 🟢 INCREASED ROW HEIGHT FROM 90 TO 115 TO PREVENT QR TEXT OVERLAP
     t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
@@ -993,8 +987,15 @@ def department_dashboard():
                             st.info(f"👥 Found **{len(valid_stu)} Active Students** eligible for registration.")
                             
                             active_ids = [s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number') for s in valid_stu]
-                            staging_check = supabase.table("course_registration_online").select("usn, course_code").eq("academic_year", active_ay).eq("semester", b_sem).eq("registration_type", "REGULAR").in_("usn", active_ids).execute()
-                            registered_data = staging_check.data or []
+                            
+                            # 🟢 FIX: Chunk the check query to safely bypass the 1,000-row API limit
+                            registered_data = []
+                            for i in range(0, len(active_ids), 50):
+                                chunk_ids = active_ids[i:i+50]
+                                staging_check = supabase.table("course_registration_online").select("usn, course_code").eq("academic_year", active_ay).eq("semester", b_sem).eq("registration_type", "REGULAR").in_("usn", chunk_ids).execute()
+                                if staging_check.data:
+                                    registered_data.extend(staging_check.data)
+                                    
                             registered_usns = list(set([r['usn'] for r in registered_data]))
                             
                             if registered_usns:
