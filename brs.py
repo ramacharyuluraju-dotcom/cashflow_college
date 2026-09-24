@@ -3,8 +3,10 @@ import pandas as pd
 import hashlib
 import calendar
 import io
+import os
 import re
 import qrcode
+import concurrent.futures
 from datetime import date, datetime
 from collections import defaultdict
 from supabase import create_client, Client
@@ -44,12 +46,50 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = ''
 
 # ==========================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS & CONCURRENCY
 # ==========================================
 def format_branch_name(branch_code):
     branch_map = {"CS": "CSE", "CI": "CSE-AIML", "CD": "CSE-DS", "AI": "AIML", "EC": "ECE", "EE": "EEE", "CV": "Civil", "ME": "ME", "AE": "AE"}
     return branch_map.get(str(branch_code).strip().upper(), str(branch_code).strip().upper())
 
+# 🟢 NEW: Bucket Mapping for fast checking
+def fetch_complete_bucket_map(bucket_name):
+    file_map = {}
+    limit = 1000; offset = 0
+    while True:
+        try:
+            files = supabase.storage.from_(bucket_name).list("", options={"limit": limit, "offset": offset})
+            if not files: break
+            for f in files:
+                fname = f.get('name', '')
+                if not fname or fname == '.emptyFolderPlaceholder': continue
+                basename = os.path.basename(fname)
+                key = re.sub(r'[^A-Z0-9]', '', os.path.splitext(basename)[0].upper())
+                file_map[key] = fname
+            if len(files) < limit: break
+            offset += limit
+        except: break
+    return file_map
+
+# 🟢 NEW: Concurrent Worker for Batch Downloads
+def download_photo_worker(args):
+    usn, file_map = args
+    clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
+    
+    if clean_usn in file_map:
+        try:
+            res = supabase.storage.from_("StakeHolders_Photos").download(file_map[clean_usn])
+            if res:
+                img = PILImage.open(io.BytesIO(res))
+                if img.mode != 'RGB': img = img.convert('RGB')
+                clean_io = io.BytesIO()
+                img.save(clean_io, format='JPEG', quality=95)
+                clean_io.seek(0)
+                return usn, clean_io
+        except: pass
+    return usn, None
+
+# Fallback for Single Document Generation
 def get_student_photo(usn):
     clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
     for ext in ['.jpg', '.jpeg', '.png', '.webp', '.JPG']:
@@ -290,14 +330,16 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     c.save()
     return buf.getvalue()
 
-
-def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1):
+# 🟢 NEW: CONCURRENT BATCH PDF GENERATOR
+def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1, progress_bar=None, status_text=None):
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
     margin = 35
+
+    if status_text: status_text.info("🖨️ Initializing PDF engine & downloading assets...")
 
     raw_assets = {}
     for k, f in {"logo": "College_logo.png", "naac": "NAAC_A_Logo.jpg", "watermark": "AMC_watermark.png"}.items():
@@ -311,151 +353,179 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
     qr.save(cached_qr_io, format="PNG")
     cached_qr_bytes = cached_qr_io.getvalue()
 
-    for item in student_course_list:
-        student = item['student']
-        courses = item['courses']
-        y = h - margin
+    # 🟢 High-Speed Directory Scan
+    if status_text: status_text.info("🔍 Scanning Student Photo database...")
+    photo_file_map = fetch_complete_bucket_map("StakeHolders_Photos")
+    
+    BATCH_SIZE = 50 
+    total = len(student_course_list)
 
-        if "watermark" in raw_assets:
-            c.saveState()
-            c.setFillAlpha(0.08)
-            c.drawImage(ImageReader(io.BytesIO(raw_assets["watermark"])), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
-            c.restoreState()
-
-        if "logo" in raw_assets: c.drawImage(ImageReader(io.BytesIO(raw_assets["logo"])), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
-        if "naac" in raw_assets: c.drawImage(ImageReader(io.BytesIO(raw_assets["naac"])), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
-
-        c.setFont("Helvetica-Bold", 15)
-        c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
-        c.setFont("Helvetica", 9)
-        c.drawCentredString(w/2, y - 15, "AMC Campus, Bannerghatta Road, Bengaluru, Karnataka - 560083")
-        c.drawCentredString(w/2, y - 27, "Autonomous Institution Affiliated to VTU, Belagavi | NAAC A+ Accredited")
-        c.setLineWidth(1)
-        c.line(margin, y - 45, w - margin, y - 45)
-        y -= 65
-
-        c.setFont("Helvetica-Bold", 11)
-        c.drawCentredString(w/2, y, f"Course Registration - {term.upper()} Semester {academic_year}")
-        y -= 20
-
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(margin, y, "Student Details")
-        y -= 5
-
-        display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
-        formatted_branch = format_branch_name(student.get('branch_code', ''))
-
-        p_style = getSampleStyleSheet()['Normal']
-        p_style.alignment = 1 
-        p_style.fontSize = 8
+    for i in range(0, total, BATCH_SIZE):
+        batch_items = student_course_list[i : i + BATCH_SIZE]
+        batch_usns = [item['student'].get('admission_number') if pd.isna(item['student'].get('usn')) or item['student'].get('usn') == '' else item['student'].get('usn') for item in batch_items]
         
-        photo_io = get_student_photo(display_id)
-        if photo_io:
-            photo_io.seek(0)
-            p_img = RLImage(photo_io, width=55, height=70)
-            p_img.hAlign = 'CENTER'
-            p_img.vAlign = 'MIDDLE'
-            digital_col = p_img
-        else:
-            p_img = RLImage(io.BytesIO(cached_qr_bytes), width=55, height=55)
-            p_img.hAlign = 'CENTER'
-            p_img.vAlign = 'MIDDLE'
-            pin = student.get('photo_pin', 'XXXX')
-            digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
+        if status_text:
+            status_text.info(f"🖨️ Rendering PDFs: Processing Batch {i//BATCH_SIZE + 1} ({min(i+BATCH_SIZE, total)}/{total} students)...")
 
-        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+        batch_photos = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(download_photo_worker, (u, photo_file_map)): u for u in batch_usns}
+            for future in concurrent.futures.as_completed(futures):
+                u, p_stream = future.result()
+                if p_stream: batch_photos[u] = p_stream
 
-        s_data = [
-            ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-            [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-        ]
-        
-        style_cmds = [
-            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
-        ]
+        for item in batch_items:
+            student = item['student']
+            courses = item['courses']
+            y = h - margin
 
-        t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
-        t1.setStyle(TableStyle(style_cmds))
-        t1.wrapOn(c, w, h)
-        _, t1_h = t1.wrap(w, h)
-        t1.drawOn(c, margin, y - t1_h)
-        y -= (t1_h + 20)
+            if "watermark" in raw_assets:
+                c.saveState()
+                c.setFillAlpha(0.08)
+                c.drawImage(ImageReader(io.BytesIO(raw_assets["watermark"])), w/2 - 175, h/2 - 175, width=350, height=350, mask='auto', preserveAspectRatio=True)
+                c.restoreState()
 
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(margin, y, f"Semester: {current_sem}")
-        y -= 15
+            if "logo" in raw_assets: c.drawImage(ImageReader(io.BytesIO(raw_assets["logo"])), margin, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
+            if "naac" in raw_assets: c.drawImage(ImageReader(io.BytesIO(raw_assets["naac"])), w - margin - 60, y - 35, width=60, height=60, mask='auto', preserveAspectRatio=True)
 
-        c.drawString(margin, y, "Courses offered")
-        y -= 5
+            c.setFont("Helvetica-Bold", 15)
+            c.drawCentredString(w/2, y, "AMC ENGINEERING COLLEGE (AUTONOMOUS)")
+            c.setFont("Helvetica", 9)
+            c.drawCentredString(w/2, y - 15, "AMC Campus, Bannerghatta Road, Bengaluru, Karnataka - 560083")
+            c.drawCentredString(w/2, y - 27, "Autonomous Institution Affiliated to VTU, Belagavi | NAAC A+ Accredited")
+            c.setLineWidth(1)
+            c.line(margin, y - 45, w - margin, y - 45)
+            y -= 65
 
-        c_data = [["Course code", "Course title", "Credits", "Select"]]
-        total_credits = 0.0
-        
-        courses = sort_courses_by_sequence(courses)
-        
-        for crs in courses:
-            cred = float(crs.get('credits', 0))
-            total_credits += cred
-            c_data.append([
-                crs.get('course_code', ''), 
-                Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
-                str(int(cred) if cred.is_integer() else cred), "Yes" 
-            ])
+            c.setFont("Helvetica-Bold", 11)
+            c.drawCentredString(w/2, y, f"Course Registration - {term.upper()} Semester {academic_year}")
+            y -= 20
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin, y, "Student Details")
+            y -= 5
+
+            display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+            formatted_branch = format_branch_name(student.get('branch_code', ''))
+
+            p_style = getSampleStyleSheet()['Normal']
+            p_style.alignment = 1 
+            p_style.fontSize = 8
             
-        c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
+            photo_io = batch_photos.get(display_id)
+            if photo_io:
+                photo_io.seek(0)
+                p_img = RLImage(photo_io, width=55, height=70)
+                p_img.hAlign = 'CENTER'
+                p_img.vAlign = 'MIDDLE'
+                digital_col = p_img
+            else:
+                p_img = RLImage(io.BytesIO(cached_qr_bytes), width=55, height=55)
+                p_img.hAlign = 'CENTER'
+                p_img.vAlign = 'MIDDLE'
+                pin = student.get('photo_pin', 'XXXX')
+                digital_col = [p_img, Paragraph(f"Scan to Upload<br/>PIN: <b>{pin}</b>", p_style)]
 
-        t2 = Table(c_data, colWidths=[110, 305, 55, 55])
-        t2.setStyle(TableStyle([
-            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('ALIGN', (0,0), (0,-1), 'CENTER'),
-            ('ALIGN', (2,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ]))
-        t2.wrapOn(c, w, h)
-        _, t2_h = t2.wrap(w, h)
-        t2.drawOn(c, margin, y - t2_h)
-        y -= (t2_h + 20)
+            physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(margin, y, "STUDENT UNDERTAKING:")
-        y -= 15
-        
-        c.setLineWidth(1)
-        c.setFont("Helvetica", 9)
-        undertakings = [
-            "I will strictly follow the AMCEC/VTU autonomy guidelines.",
-            "I have paid the full tuition fees and examination fees for the current semester.",
-            "I am aware that I must maintain a minimum of 85% attendance to appear for SEE.",
-            "I have verified that my selected credits align with the academic regulations."
-        ]
-        for u in undertakings:
-            c.rect(margin, y - 8, 10, 10) 
-            c.drawString(margin + 18, y - 6, u)
-            y -= 18
-        y -= 10
-        
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(margin, y, "DECLARATION:")
-        y -= 12
-        p_style = getSampleStyleSheet()['Normal']
-        p_style.fontSize = 9
-        decl = Paragraph("I hereby declare that the information provided is true to the best of my knowledge. I have carefully selected the courses listed above and I request to be registered for the same in the current semester.", p_style)
-        decl.wrapOn(c, w - (2*margin), 50)
-        _, decl_h = decl.wrap(w - (2*margin), 50)
-        decl.drawOn(c, margin, y - decl_h)
-        y -= (decl_h + 30)
+            s_data = [
+                ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+                [display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+            ]
+            
+            style_cmds = [
+                ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
+            ]
 
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
-        c.drawRightString(w - margin, y, "Signature of the Student")
-        
-        c.showPage()
+            t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 90])
+            t1.setStyle(TableStyle(style_cmds))
+            t1.wrapOn(c, w, h)
+            _, t1_h = t1.wrap(w, h)
+            t1.drawOn(c, margin, y - t1_h)
+            y -= (t1_h + 20)
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin, y, f"Semester: {current_sem}")
+            y -= 15
+
+            c.drawString(margin, y, "Courses offered")
+            y -= 5
+
+            c_data = [["Course code", "Course title", "Credits", "Select"]]
+            total_credits = 0.0
+            
+            courses = sort_courses_by_sequence(courses)
+            
+            for crs in courses:
+                cred = float(crs.get('credits', 0))
+                total_credits += cred
+                c_data.append([
+                    crs.get('course_code', ''), 
+                    Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
+                    str(int(cred) if cred.is_integer() else cred), "Yes" 
+                ])
+                
+            c_data.append(["", Paragraph("<b>Total Credits</b>", getSampleStyleSheet()['Normal']), str(int(total_credits) if total_credits.is_integer() else total_credits), ""])
+
+            t2 = Table(c_data, colWidths=[110, 305, 55, 55])
+            t2.setStyle(TableStyle([
+                ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('ALIGN', (0,0), (0,-1), 'CENTER'),
+                ('ALIGN', (2,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ]))
+            t2.wrapOn(c, w, h)
+            _, t2_h = t2.wrap(w, h)
+            t2.drawOn(c, margin, y - t2_h)
+            y -= (t2_h + 20)
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin, y, "STUDENT UNDERTAKING:")
+            y -= 15
+            
+            c.setLineWidth(1)
+            c.setFont("Helvetica", 9)
+            undertakings = [
+                "I will strictly follow the AMCEC/VTU autonomy guidelines.",
+                "I have paid the full tuition fees and examination fees for the current semester.",
+                "I am aware that I must maintain a minimum of 85% attendance to appear for SEE.",
+                "I have verified that my selected credits align with the academic regulations."
+            ]
+            for u in undertakings:
+                c.rect(margin, y - 8, 10, 10) 
+                c.drawString(margin + 18, y - 6, u)
+                y -= 18
+            y -= 10
+            
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin, y, "DECLARATION:")
+            y -= 12
+            p_style = getSampleStyleSheet()['Normal']
+            p_style.fontSize = 9
+            decl = Paragraph("I hereby declare that the information provided is true to the best of my knowledge. I have carefully selected the courses listed above and I request to be registered for the same in the current semester.", p_style)
+            decl.wrapOn(c, w - (2*margin), 50)
+            _, decl_h = decl.wrap(w - (2*margin), 50)
+            decl.drawOn(c, margin, y - decl_h)
+            y -= (decl_h + 30)
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
+            c.drawRightString(w - margin, y, "Signature of the Student")
+            
+            c.showPage()
+            
+        if progress_bar:
+            progress_bar.progress(min((i + BATCH_SIZE) / total, 1.0))
+
+        # 🟢 MEMORY FLUSH: Clear the photo streams to prevent server crashes
+        for stream in batch_photos.values(): stream.close()
+        batch_photos.clear()
         
     c.save()
     return buf.getvalue()
@@ -907,25 +977,30 @@ def department_dashboard():
                             if registered_usns:
                                 st.success(f"✅ {len(registered_usns)} students in this batch already have active registrations.")
                                 if st.button("🖨️ Re-Download Master PDF (Already Registered Students)", type="secondary"):
-                                    with st.spinner("Reconstructing applications from database..."):
-                                        grouped_courses = defaultdict(list)
-                                        for r in registered_data:
-                                            grouped_courses[r['usn']].append(r['course_code'])
+                                    grouped_courses = defaultdict(list)
+                                    for r in registered_data:
+                                        grouped_courses[r['usn']].append(r['course_code'])
+                                        
+                                    student_course_payload = []
+                                    for s in valid_stu:
+                                        s_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
+                                        if s_id in grouped_courses:
+                                            c_codes = grouped_courses[s_id]
+                                            pdf_courses = [{
+                                                "course_code": cc, 
+                                                "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
+                                                "credits": next((float(c.get('credits', 0)) for c in all_courses if c['course_code'] == cc), 0.0)
+                                            } for cc in c_codes]
+                                            student_course_payload.append({'student': s, 'courses': pdf_courses})
                                             
-                                        student_course_payload = []
-                                        for s in valid_stu:
-                                            s_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
-                                            if s_id in grouped_courses:
-                                                c_codes = grouped_courses[s_id]
-                                                pdf_courses = [{
-                                                    "course_code": cc, 
-                                                    "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
-                                                    "credits": next((float(c.get('credits', 0)) for c in all_courses if c['course_code'] == cc), 0.0)
-                                                } for cc in c_codes]
-                                                student_course_payload.append({'student': s, 'courses': pdf_courses})
-                                                
-                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
-                                        st.download_button("📥 Click Here to Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
+                                    # 🟢 SPINNER: Track UI visual state during reconstruction
+                                    status_text = st.empty()
+                                    progress_bar = st.progress(0)
+                                    
+                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
+                                    
+                                    status_text.success("✅ Master PDF Reconstructed Successfully!")
+                                    st.download_button("📥 Click Here to Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
                                 st.divider()
                             
                             if not pe_courses and not oe_courses:
@@ -950,15 +1025,12 @@ def department_dashboard():
                                             
                                         student_course_payload.append({'student': s, 'courses': pdf_courses})
                                     
-                                    # 🟢 SPINNER 1: Highly optimized Database Insertion
                                     with st.spinner(f"☁️ Syncing {len(payload_staging) * 2} records to the COE Cloud Database..."):
                                         try:
-                                            # Increased chunk sizes from 50 to 200 for faster deletions
                                             for i in range(0, len(processed_ids), 200):
                                                 supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", processed_ids[i:i+200]).execute()
                                                 supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", processed_ids[i:i+200]).execute()
                                             
-                                            # Increased chunk sizes from 500 to 1000 for fewer API calls
                                             for i in range(0, len(payload_staging), 1000):
                                                 supabase.table("course_registration_online").insert(payload_staging[i:i+1000]).execute()
                                                 supabase.table("course_registrations").insert(payload_official[i:i+1000]).execute()
@@ -966,12 +1038,16 @@ def department_dashboard():
                                             st.success(f"✅ Cloud Sync Complete! Registered {len(valid_stu)} students for {len(core_courses)} courses.")
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
-                                            st.stop() # Stop here if DB fails
+                                            st.stop() 
 
-                                    # 🟢 SPINNER 2: Separated PDF Generation Engine
-                                    with st.spinner(f"🖨️ Rendering {len(valid_stu)}-page Master PDF... This will take a moment for large branches."):
-                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
-                                        st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
+                                    # 🟢 SPINNER: Concurrent PDF engine state
+                                    status_text = st.empty()
+                                    progress_bar = st.progress(0)
+                                    
+                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
+                                    
+                                    status_text.success("✅ Master PDF Generated Successfully!")
+                                    st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
                             
                             else:
                                 st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each student to their chosen courses.")
@@ -996,7 +1072,6 @@ def department_dashboard():
                                                 payload_staging.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
                                                 payload_official.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
                                         
-                                        # 🟢 SPINNER 1: Database Operations
                                         with st.spinner(f"☁️ Syncing {len(payload_staging) * 2} rows from CSV to Cloud Database..."):
                                             try:
                                                 for i in range(0, len(csv_ids), 200):
@@ -1012,8 +1087,8 @@ def department_dashboard():
                                                 st.error(f"Upload Error: {e}")
                                                 st.stop()
 
-                                        # 🟢 SPINNER 2: PDF Operations
-                                        with st.spinner("🖨️ Gathering student data and Rendering Master PDF..."):
+                                        # 🟢 Data Parsing & Passing to PDF Engine
+                                        with st.spinner("🗂️ Gathering student database records..."):
                                             try:
                                                 st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
@@ -1043,11 +1118,19 @@ def department_dashboard():
                                                     } for cc in c_codes]
                                                     
                                                     student_course_payload.append({'student': s, 'courses': pdf_courses})
-                                                    
-                                                pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem)
-                                                st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_CSV.pdf", mime="application/pdf", type="primary")
                                             except Exception as e:
-                                                st.error(f"PDF Rendering Error: {e}")
+                                                st.error(f"Data mapping error: {e}")
+                                                st.stop()
+                                        
+                                        # 🟢 SPINNER: Concurrent PDF engine state
+                                        status_text = st.empty()
+                                        progress_bar = st.progress(0)
+                                        
+                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
+                                        
+                                        status_text.success("✅ Master PDF Generated Successfully!")
+                                        st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_CSV.pdf", mime="application/pdf", type="primary")
+
 
     # --- SUMMER REGISTRATION ---
     with tab_summer:
