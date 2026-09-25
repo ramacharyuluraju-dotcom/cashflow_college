@@ -947,7 +947,7 @@ def department_dashboard():
                                         except Exception as e:
                                             st.error(f"Database Error: {e}")
 
-        # 🟢 BULK AUTO-REGISTRATION MODE
+        # 🟢 BULK AUTO-REGISTRATION MODE WITH SECTION FILTERING
         elif entry_mode == "🚀 Bulk Branch Auto-Registration":
             st.markdown("### Bulk Class Registration Engine")
             col_b1, col_b2, col_b3 = st.columns(3)
@@ -969,8 +969,31 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
-                        valid_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
+                        # Fetch all students in this branch/sem
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
+                        
+                        # 🟢 Extract unique sections dynamically
+                        available_sections = sorted(list(set([str(s.get('section', 'Unassigned')).strip().upper() for s in all_branch_stu if s.get('section')])))
+                        
+                    if not all_branch_stu:
+                        st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
+                    else:
+                        st.divider()
+                        st.markdown("#### 🎯 Section Deployment & Filtering")
+                        st.info("Filter by section to keep PDF generation batches small (ideal for distributing physical copies to classrooms).")
+                        
+                        b_section = st.selectbox("Select Target Section", ["-- Process Entire Branch --"] + available_sections)
+                        
+                        if b_section == "-- Process Entire Branch --":
+                            valid_stu = all_branch_stu
+                            pdf_suffix = "ALL"
+                        else:
+                            valid_stu = [s for s in all_branch_stu if str(s.get('section', '')).strip().upper() == b_section]
+                            pdf_suffix = f"Sec_{b_section}"
+                            
+                        # Sort students alphabetically so the final PDF is in perfect order
+                        valid_stu = sorted(valid_stu, key=lambda x: x.get('full_name', ''))
                         
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
@@ -979,16 +1002,16 @@ def department_dashboard():
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
                         oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
                         
-                        if not valid_stu:
-                            st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
-                        elif not core_courses:
+                        if not core_courses:
                             st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
+                        elif not valid_stu:
+                            st.warning(f"No students found in the selected section.")
                         else:
-                            st.info(f"👥 Found **{len(valid_stu)} Active Students** eligible for registration.")
+                            st.success(f"👥 Ready to process **{len(valid_stu)} Students** for {b_branch} (Section: {b_section}).")
                             
                             active_ids = [s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number') for s in valid_stu]
                             
-                            # 🟢 FIX: Chunk the check query to safely bypass the 1,000-row API limit
+                            # 🟢 Chunk the check query to safely bypass the 1,000-row API limit
                             registered_data = []
                             for i in range(0, len(active_ids), 50):
                                 chunk_ids = active_ids[i:i+50]
@@ -999,8 +1022,8 @@ def department_dashboard():
                             registered_usns = list(set([r['usn'] for r in registered_data]))
                             
                             if registered_usns:
-                                st.success(f"✅ {len(registered_usns)} students in this batch already have active registrations.")
-                                if st.button("🖨️ Re-Download Master PDF (Already Registered Students)", type="secondary"):
+                                st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
+                                if st.button(f"🖨️ Re-Download Master PDF ({b_section})", type="secondary"):
                                     grouped_courses = defaultdict(list)
                                     for r in registered_data:
                                         grouped_courses[r['usn']].append(r['course_code'])
@@ -1023,16 +1046,13 @@ def department_dashboard():
                                     pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                     
                                     status_text.success("✅ Master PDF Reconstructed Successfully!")
-                                    st.download_button("📥 Click Here to Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
+                                    st.download_button("📥 Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary")
                                 st.divider()
                             
                             if not pe_courses and not oe_courses:
                                 st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. All students take the exact same courses.")
-                                st.markdown("**Courses to be registered:**")
-                                for c in core_courses:
-                                    st.markdown(f"- {c['course_code']} - {c['title']}")
                                 
-                                if st.button(f"🚀 One-Click Auto-Register All {len(valid_stu)} Students", type="primary"):
+                                if st.button(f"🚀 One-Click Auto-Register {len(valid_stu)} Students", type="primary"):
                                     payload_staging, payload_official, student_course_payload = [], [], []
                                     processed_ids = []
                                     
@@ -1069,7 +1089,7 @@ def department_dashboard():
                                     pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                     
                                     status_text.success("✅ Master PDF Generated Successfully!")
-                                    st.download_button("📥 Download Master PDF (All Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_Sem{b_sem}.pdf", mime="application/pdf", type="primary")
+                                    st.download_button("📥 Download Section PDF", data=pdf_bytes, file_name=f"Applications_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary")
                             
                             else:
                                 st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each student to their chosen courses.")
@@ -1149,8 +1169,7 @@ def department_dashboard():
                                         pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                         
                                         status_text.success("✅ Master PDF Generated Successfully!")
-                                        st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_CSV.pdf", mime="application/pdf", type="primary")
-
+                                        st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary")
 
     # --- SUMMER REGISTRATION ---
     with tab_summer:
