@@ -1023,7 +1023,7 @@ def department_dashboard():
                             
                             if registered_usns:
                                 st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
-                                if st.button(f"🖨️ Re-Download Master PDF ({b_section})", type="secondary"):
+                                if st.button(f"🖨️️ Re-Download Master PDF ({b_section})", type="secondary"):
                                     grouped_courses = defaultdict(list)
                                     for r in registered_data:
                                         grouped_courses[r['usn']].append(r['course_code'])
@@ -1298,11 +1298,20 @@ def department_dashboard():
                                             
                                             rule_1_credits = sum([c['credits'] for c in selected_summer_courses if "Rule 1" in c['rule']])
                                             
+                                            # 🟢 DYNAMIC GRACE CREDITS: UG (Max 15) vs PG (Max 18)
+                                            if prog_type == "UG":
+                                                override_label = "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15 for UG)"
+                                                override_max = 15
+                                            else:
+                                                override_label = "🚨 **Principal/HOD Override:** Allow up to 4 additional credits (Max 18 for PG)"
+                                                override_max = 18
+
                                             allow_extra_credit = st.checkbox(
-                                                "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15)", 
+                                                override_label, 
                                                 help="Check this box if the student has special written permission to exceed the standard 14-credit limit."
                                             )
-                                            max_allowed = 15 if allow_extra_credit else 14
+
+                                            max_allowed = override_max if allow_extra_credit else 14
                                             
                                             if rule_1_credits > max_allowed:
                                                 st.error(f"❌ **Credit Limit Exceeded!** Selected {rule_1_credits} credits under Rule 1. Maximum allowed is **{max_allowed} Credits**.")
