@@ -226,6 +226,13 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
+        
+        # 🟢 DYNAMIC TABLE: Photo exists, remove physical column
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Photograph"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col]
+        ]
+        col_widths = [95, 165, 65, 50, 150]
     else:
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
@@ -239,12 +246,14 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
 
-    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-    s_data = [
-        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-    ]
+        # 🟡 DYNAMIC TABLE: No photo, keep physical column
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+        ]
+        col_widths = [85, 145, 55, 40, 100, 100]
     
     style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
@@ -254,7 +263,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
+    t1 = Table(s_data, colWidths=col_widths, rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -428,6 +437,13 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
                 digital_col = p_img
+                
+                # 🟢 DYNAMIC TABLE: Photo exists, remove physical column
+                s_data = [
+                    ["USN / Admin No.", "Student Name", "Branch", "Type", "Photograph"],
+                    [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col]
+                ]
+                col_widths = [95, 165, 65, 50, 150]
             else:
                 p_img = RLImage(io.BytesIO(cached_qr_bytes), width=50, height=50)
                 p_img.hAlign = 'CENTER'
@@ -437,13 +453,15 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
                 digital_col = [p_img, Paragraph(login_text, p_style)]
 
-            physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+                physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-            s_data = [
-                ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-                [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-            ]
-            
+                # 🟡 DYNAMIC TABLE: No photo, keep physical column
+                s_data = [
+                    ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+                    [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+                ]
+                col_widths = [85, 145, 55, 40, 100, 100]
+
             style_cmds = [
                 ('GRID', (0,0), (-1,-1), 0.5, colors.black),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -452,7 +470,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
             ]
 
-            t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
+            t1 = Table(s_data, colWidths=col_widths, rowHeights=[20, 115])
             t1.setStyle(TableStyle(style_cmds))
             t1.wrapOn(c, w, h)
             _, t1_h = t1.wrap(w, h)
@@ -604,6 +622,13 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
+        
+        # 🟢 DYNAMIC TABLE: Photo exists, remove physical column
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Photograph"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col]
+        ]
+        col_widths = [95, 165, 65, 50, 150]
     else:
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
@@ -617,13 +642,15 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
 
-    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-    s_data = [
-        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-    ]
-    
+        # 🟡 DYNAMIC TABLE: No photo, keep physical column
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+        ]
+        col_widths = [85, 145, 55, 40, 100, 100]
+
     style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -632,7 +659,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
+    t1 = Table(s_data, colWidths=col_widths, rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -1023,7 +1050,7 @@ def department_dashboard():
                             
                             if registered_usns:
                                 st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
-                                if st.button(f"🖨️️ Re-Download Master PDF ({b_section})", type="secondary"):
+                                if st.button(f"🖨️ Re-Download Master PDF ({b_section})", type="secondary"):
                                     grouped_courses = defaultdict(list)
                                     for r in registered_data:
                                         grouped_courses[r['usn']].append(r['course_code'])
