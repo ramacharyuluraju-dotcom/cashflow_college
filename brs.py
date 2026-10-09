@@ -165,7 +165,7 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
 # ==========================================
 # REGULAR SEMESTER PDF GENERATORS
 # ==========================================
-def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1, prog_type="UG"):
+def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", current_sem=1):
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
@@ -226,13 +226,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
-        
-        # 🟢 DYNAMIC TABLE: Photo exists, remove physical column (prog_type injected)
-        s_data = [
-            ["USN / Admin No.", "Student Name", "Branch", "Type", "Photograph"],
-            [table_display_id, student.get('full_name',''), formatted_branch, prog_type, digital_col]
-        ]
-        col_widths = [95, 165, 65, 50, 150]
     else:
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
@@ -246,14 +239,12 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
 
-        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-        # 🟡 DYNAMIC TABLE: No photo, keep physical column (prog_type injected)
-        s_data = [
-            ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-            [table_display_id, student.get('full_name',''), formatted_branch, prog_type, digital_col, physical_col]
-        ]
-        col_widths = [85, 145, 55, 40, 100, 100]
+    s_data = [
+        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+    ]
     
     style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
@@ -263,7 +254,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=col_widths, rowHeights=[20, 115])
+    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -345,7 +336,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
 
 
 # 🟢 BULK PDF GENERATOR
-def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1, progress_bar=None, status_text=None, prog_type="UG"):
+def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term="ODD", current_sem=1, progress_bar=None, status_text=None):
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
@@ -437,13 +428,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
                 digital_col = p_img
-                
-                # 🟢 DYNAMIC TABLE: Photo exists, remove physical column (prog_type injected)
-                s_data = [
-                    ["USN / Admin No.", "Student Name", "Branch", "Type", "Photograph"],
-                    [table_display_id, student.get('full_name',''), formatted_branch, prog_type, digital_col]
-                ]
-                col_widths = [95, 165, 65, 50, 150]
             else:
                 p_img = RLImage(io.BytesIO(cached_qr_bytes), width=50, height=50)
                 p_img.hAlign = 'CENTER'
@@ -453,15 +437,13 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
                 digital_col = [p_img, Paragraph(login_text, p_style)]
 
-                physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+            physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-                # 🟡 DYNAMIC TABLE: No photo, keep physical column (prog_type injected)
-                s_data = [
-                    ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-                    [table_display_id, student.get('full_name',''), formatted_branch, prog_type, digital_col, physical_col]
-                ]
-                col_widths = [85, 145, 55, 40, 100, 100]
-
+            s_data = [
+                ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+                [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+            ]
+            
             style_cmds = [
                 ('GRID', (0,0), (-1,-1), 0.5, colors.black),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -470,7 +452,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
             ]
 
-            t1 = Table(s_data, colWidths=col_widths, rowHeights=[20, 115])
+            t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
             t1.setStyle(TableStyle(style_cmds))
             t1.wrapOn(c, w, h)
             _, t1_h = t1.wrap(w, h)
@@ -561,7 +543,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
 # ==========================================
 # SUMMER SEMESTER PDF GENERATOR 
 # ==========================================
-def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular", prog_type="UG"):
+def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
     
     buf = io.BytesIO()
@@ -622,13 +604,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
-        
-        # 🟢 DYNAMIC TABLE: Photo exists, remove physical column (prog_type injected)
-        s_data = [
-            ["USN / Admin No.", "Student Name", "Branch", "Type", "Photograph"],
-            [table_display_id, student.get('full_name',''), formatted_branch, prog_type, digital_col]
-        ]
-        col_widths = [95, 165, 65, 50, 150]
     else:
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
@@ -642,15 +617,13 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
 
-        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-        # 🟡 DYNAMIC TABLE: No photo, keep physical column (prog_type injected)
-        s_data = [
-            ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-            [table_display_id, student.get('full_name',''), formatted_branch, prog_type, digital_col, physical_col]
-        ]
-        col_widths = [85, 145, 55, 40, 100, 100]
-
+    s_data = [
+        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
+        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
+    ]
+    
     style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -659,7 +632,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=col_widths, rowHeights=[20, 115])
+    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -876,6 +849,7 @@ def department_dashboard():
                     
                     current_sem = int(stu.get('current_sem', 1))
                     student_scheme = int(stu.get('scheme_batch', 25))
+                    student_is_lateral = bool(stu.get('is_lateral', False))
                     
                     staging_check = supabase.table("course_registration_online").select("*").eq("usn", active_usn_or_admin).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
                     is_staged = staging_check.data and len(staging_check.data) > 0
@@ -894,11 +868,7 @@ def department_dashboard():
                             'credits': float(c_info.get(r['course_code'], {}).get('credits', 0.0))
                         } for r in reg_data]
                         
-                        branch_code = stu.get('branch_code', '')
-                        br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
-                        prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
-                        
-                        pdf_bytes = generate_regular_pdf(stu, reconstructed_courses, academic_year=active_ay, term=active_term, current_sem=current_sem, prog_type=prog_type)
+                        pdf_bytes = generate_regular_pdf(stu, reconstructed_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
                         st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary")
                     else:
                         if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
@@ -914,24 +884,35 @@ def department_dashboard():
                                 br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
                                 prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                                 
-                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**")
+                                lat_badge = " | 🎓 **Lateral Entry**" if student_is_lateral else ""
+                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**{lat_badge}")
                                 
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'CORE' and int(c.get('scheme_batch', 25)) == student_scheme]
+                                # Categorize the subjects safely mapped to this branch/scheme
+                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT'] and int(c.get('scheme_batch', 25)) == student_scheme]
+                                lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme]
+                                
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
-                                st.markdown("### 1. Mandatory Core Courses")
+                                st.markdown("### 1. Mandatory Core, Lab & Non-Credit Courses")
                                 if not core_courses:
                                     st.warning("No core courses found for this semester.")
                                 for core in core_courses:
-                                    st.markdown(f"- ✅ **{core['course_code']}** - {core['title']} *(Auto-assigned)*")
+                                    st.markdown(f"- ✅ **{core['course_code']}** - {core['title']} *(Auto-assigned {core.get('course_type', 'CORE')})*")
                                     selected_codes.append(core['course_code'])
                                     total_credits += float(core.get('credits', 4))
+                                    
+                                if student_is_lateral and lateral_courses:
+                                    st.markdown("### 🎓 Additional Lateral Entry Subjects")
+                                    for lat in lateral_courses:
+                                        st.markdown(f"- ✅ **{lat['course_code']}** - {lat['title']} *(Auto-assigned LATERAL)*")
+                                        selected_codes.append(lat['course_code'])
+                                        total_credits += float(lat.get('credits', 0))
                                     
                                 if pe_courses or oe_courses:
                                     st.markdown("### 2. Electives")
@@ -973,7 +954,7 @@ def department_dashboard():
                                                 "credits": next((float(c['credits']) for c in all_courses if c['course_code'] == cc), 0.0)
                                             } for cc in selected_codes]
                                             
-                                            pdf_bytes = generate_regular_pdf(stu, pdf_courses, academic_year=active_ay, term=active_term, current_sem=current_sem, prog_type=prog_type)
+                                            pdf_bytes = generate_regular_pdf(stu, pdf_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
                                             st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary")
                                         except Exception as e:
                                             st.error(f"Database Error: {e}")
@@ -993,9 +974,6 @@ def department_dashboard():
             b_scheme = col_b3.number_input("Scheme Batch (e.g., 25)", value=25)
             
             if b_branch != "-- Select --":
-                br_res = supabase.table("master_branches").select("program_type").eq("branch_code", b_branch).execute()
-                prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
-                
                 is_odd_sem = (b_sem % 2 != 0)
                 is_active_odd = (active_term.upper() == 'ODD')
                 
@@ -1004,7 +982,7 @@ def department_dashboard():
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
                         # Fetch all students in this branch/sem
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, is_lateral").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
                         # 🟢 Extract unique sections dynamically
@@ -1032,7 +1010,10 @@ def department_dashboard():
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'CORE']
+                        # Note: 'core_courses' now explicitly includes LAB and NON CREDIT types as well!
+                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT']]
+                        lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
+                        
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
                         oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
                         
@@ -1057,7 +1038,7 @@ def department_dashboard():
                             
                             if registered_usns:
                                 st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
-                                if st.button(f"🖨️️ Re-Download Master PDF ({b_section})", type="secondary"):
+                                if st.button(f"🖨️ Re-Download Master PDF ({b_section})", type="secondary"):
                                     grouped_courses = defaultdict(list)
                                     for r in registered_data:
                                         grouped_courses[r['usn']].append(r['course_code'])
@@ -1077,14 +1058,14 @@ def department_dashboard():
                                     status_text = st.empty()
                                     progress_bar = st.progress(0)
                                     
-                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text, prog_type=prog_type)
+                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                     
                                     status_text.success("✅ Master PDF Reconstructed Successfully!")
                                     st.download_button("📥 Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary")
                                 st.divider()
                             
                             if not pe_courses and not oe_courses:
-                                st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. All students take the exact same courses.")
+                                st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. The system will automatically handle Lateral subjects for applicable students.")
                                 
                                 if st.button(f"🚀 One-Click Auto-Register {len(valid_stu)} Students", type="primary"):
                                     payload_staging, payload_official, student_course_payload = [], [], []
@@ -1092,10 +1073,18 @@ def department_dashboard():
                                     
                                     for s in valid_stu:
                                         active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
+                                        is_lateral = bool(s.get('is_lateral', False))
                                         processed_ids.append(active_id)
                                         
+                                        # Base subjects for everyone
+                                        student_assigned_courses = list(core_courses)
+                                        
+                                        # Slip in Lateral math if they are a lateral student
+                                        if is_lateral:
+                                            student_assigned_courses.extend(lateral_courses)
+                                        
                                         pdf_courses = []
-                                        for c in core_courses:
+                                        for c in student_assigned_courses:
                                             payload_staging.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
                                             payload_official.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
                                             pdf_courses.append({"course_code": c['course_code'], "course_title": c['title'], "credits": float(c.get('credits', 0))})
@@ -1112,7 +1101,7 @@ def department_dashboard():
                                                 supabase.table("course_registration_online").insert(payload_staging[i:i+1000]).execute()
                                                 supabase.table("course_registrations").insert(payload_official[i:i+1000]).execute()
                                                 
-                                            st.success(f"✅ Cloud Sync Complete! Registered {len(valid_stu)} students for {len(core_courses)} courses.")
+                                            st.success(f"✅ Cloud Sync Complete! Registered {len(valid_stu)} students.")
                                         except Exception as e:
                                             st.error(f"Bulk Registration Error: {e}")
                                             st.stop() 
@@ -1120,7 +1109,7 @@ def department_dashboard():
                                     status_text = st.empty()
                                     progress_bar = st.progress(0)
                                     
-                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text, prog_type=prog_type)
+                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                     
                                     status_text.success("✅ Master PDF Generated Successfully!")
                                     st.download_button("📥 Download Section PDF", data=pdf_bytes, file_name=f"Applications_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary")
@@ -1200,7 +1189,7 @@ def department_dashboard():
                                         status_text = st.empty()
                                         progress_bar = st.progress(0)
                                         
-                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text, prog_type=prog_type)
+                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                         
                                         status_text.success("✅ Master PDF Generated Successfully!")
                                         st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary")
@@ -1258,11 +1247,8 @@ def department_dashboard():
                         
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     student = stu_res.data[0] if stu_res.data else {'usn': summer_usn}
-                    branch_code = student.get('branch_code', '')
-                    br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
-                    prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                     
-                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=target_sum_ay, exam_type="Summer", prog_type=prog_type)
+                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=target_sum_ay, exam_type="Summer")
                     st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
                 else:
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
@@ -1335,20 +1321,11 @@ def department_dashboard():
                                             
                                             rule_1_credits = sum([c['credits'] for c in selected_summer_courses if "Rule 1" in c['rule']])
                                             
-                                            # 🟢 DYNAMIC GRACE CREDITS: UG (Max 15) vs PG (Max 18)
-                                            if prog_type == "UG":
-                                                override_label = "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15 for UG)"
-                                                override_max = 15
-                                            else:
-                                                override_label = "🚨 **Principal/HOD Override:** Allow up to 4 additional credits (Max 18 for PG)"
-                                                override_max = 18
-
                                             allow_extra_credit = st.checkbox(
-                                                override_label, 
+                                                "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15)", 
                                                 help="Check this box if the student has special written permission to exceed the standard 14-credit limit."
                                             )
-
-                                            max_allowed = override_max if allow_extra_credit else 14
+                                            max_allowed = 15 if allow_extra_credit else 14
                                             
                                             if rule_1_credits > max_allowed:
                                                 st.error(f"❌ **Credit Limit Exceeded!** Selected {rule_1_credits} credits under Rule 1. Maximum allowed is **{max_allowed} Credits**.")
@@ -1368,7 +1345,7 @@ def department_dashboard():
                                                         supabase.table("course_registrations").insert(payload_official).execute()
                                                         
                                                         st.success(f"✅ Application successfully registered and sent directly to the COE!")
-                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=target_sum_ay, exam_type="Summer", prog_type=prog_type)
+                                                        pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=target_sum_ay, exam_type="Summer")
                                                         st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
@@ -1422,7 +1399,7 @@ def department_dashboard():
 # ==========================================
 def admin_dashboard():
     st.title("📊 Admin Consolidation Panel")
-    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "☀️️ Summer Fee Reports"])
+    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "☀️ Summer Fee Reports"])
     
     with tab1:
         c1, c2 = st.columns(2)
