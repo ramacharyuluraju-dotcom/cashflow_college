@@ -220,12 +220,21 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     p_style.fontSize = 8
     
     photo_io = get_student_photo(display_id)
-    if photo_io:
+    has_photo = bool(photo_io)
+    
+    if has_photo:
         photo_io.seek(0)
         p_img = RLImage(photo_io, width=60, height=80)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
+        
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Sem", "Student Photo"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", str(current_sem), digital_col]
+        ]
+        t1_colWidths = [85, 155, 55, 40, 40, 150]
+        
     else:
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
@@ -238,13 +247,13 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         pin = student.get('photo_pin', 'XXXX')
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
+        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
-
-    s_data = [
-        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-    ]
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Sem", "Digital Photo", "Physical Photo"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", str(current_sem), digital_col, physical_col]
+        ]
+        t1_colWidths = [80, 135, 50, 40, 30, 95, 95]
     
     style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
@@ -254,7 +263,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
+    t1 = Table(s_data, colWidths=t1_colWidths, rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -262,11 +271,12 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     y -= (t1_h + 20)
 
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin, y, f"Semester: {current_sem}")
-    y -= 15
-
     c.drawString(margin, y, "Courses offered")
     y -= 5
+
+    p_style_code = getSampleStyleSheet()['Normal']
+    p_style_code.fontSize = 9
+    p_style_code.leading = 11
 
     c_data = [["Course code", "Course title", "Credits", "Select"]]
     total_credits = 0.0
@@ -276,8 +286,13 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     for crs in courses:
         cred = float(crs.get('credits', 0))
         total_credits += cred
+        
+        # Safely replace slashes with slash+space so long course codes wrap properly
+        raw_code = str(crs.get('course_code', ''))
+        safe_code = raw_code.replace('/', '/ ')
+        
         c_data.append([
-            crs.get('course_code', ''), 
+            Paragraph(safe_code, p_style_code), 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
             str(int(cred) if cred.is_integer() else cred), "Yes" 
         ])
@@ -325,11 +340,14 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     decl.wrapOn(c, w - (2*margin), 50)
     _, decl_h = decl.wrap(w - (2*margin), 50)
     decl.drawOn(c, margin, y - decl_h)
-    y -= (decl_h + 30)
+    
+    # Give two lines of space for sign and date
+    y -= (decl_h + 60) 
 
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
-    c.drawRightString(w - margin, y, "Signature of the Student")
+    c.drawRightString(w - margin, y, "_________________________")
+    c.drawRightString(w - margin, y - 15, "Signature of the Student")
     
     c.save()
     return buf.getvalue()
@@ -422,12 +440,21 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             p_style.fontSize = 8
             
             photo_io = batch_photos.get(display_id)
-            if photo_io:
+            has_photo = bool(photo_io)
+            
+            if has_photo:
                 photo_io.seek(0)
                 p_img = RLImage(photo_io, width=60, height=80)
                 p_img.hAlign = 'CENTER'
                 p_img.vAlign = 'MIDDLE'
                 digital_col = p_img
+                
+                s_data = [
+                    ["USN / Admin No.", "Student Name", "Branch", "Type", "Sem", "Student Photo"],
+                    [table_display_id, student.get('full_name',''), formatted_branch, "UG", str(current_sem), digital_col]
+                ]
+                t1_colWidths = [85, 155, 55, 40, 40, 150]
+                
             else:
                 p_img = RLImage(io.BytesIO(cached_qr_bytes), width=50, height=50)
                 p_img.hAlign = 'CENTER'
@@ -436,14 +463,14 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 pin = student.get('photo_pin', 'XXXX')
                 login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
                 digital_col = [p_img, Paragraph(login_text, p_style)]
+                physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-            physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+                s_data = [
+                    ["USN / Admin No.", "Student Name", "Branch", "Type", "Sem", "Digital Photo", "Physical Photo"],
+                    [table_display_id, student.get('full_name',''), formatted_branch, "UG", str(current_sem), digital_col, physical_col]
+                ]
+                t1_colWidths = [80, 135, 50, 40, 30, 95, 95]
 
-            s_data = [
-                ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-                [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-            ]
-            
             style_cmds = [
                 ('GRID', (0,0), (-1,-1), 0.5, colors.black),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -452,7 +479,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
             ]
 
-            t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
+            t1 = Table(s_data, colWidths=t1_colWidths, rowHeights=[20, 115])
             t1.setStyle(TableStyle(style_cmds))
             t1.wrapOn(c, w, h)
             _, t1_h = t1.wrap(w, h)
@@ -460,11 +487,12 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             y -= (t1_h + 20)
 
             c.setFont("Helvetica-Bold", 10)
-            c.drawString(margin, y, f"Semester: {current_sem}")
-            y -= 15
-
             c.drawString(margin, y, "Courses offered")
             y -= 5
+
+            p_style_code = getSampleStyleSheet()['Normal']
+            p_style_code.fontSize = 9
+            p_style_code.leading = 11
 
             c_data = [["Course code", "Course title", "Credits", "Select"]]
             total_credits = 0.0
@@ -474,8 +502,12 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             for crs in courses:
                 cred = float(crs.get('credits', 0))
                 total_credits += cred
+                
+                raw_code = str(crs.get('course_code', ''))
+                safe_code = raw_code.replace('/', '/ ')
+                
                 c_data.append([
-                    crs.get('course_code', ''), 
+                    Paragraph(safe_code, p_style_code), 
                     Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
                     str(int(cred) if cred.is_integer() else cred), "Yes" 
                 ])
@@ -523,11 +555,14 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             decl.wrapOn(c, w - (2*margin), 50)
             _, decl_h = decl.wrap(w - (2*margin), 50)
             decl.drawOn(c, margin, y - decl_h)
-            y -= (decl_h + 30)
+            
+            # 2 lines of space for signature
+            y -= (decl_h + 60) 
 
             c.setFont("Helvetica-Bold", 10)
             c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
-            c.drawRightString(w - margin, y, "Signature of the Student")
+            c.drawRightString(w - margin, y, "_________________________")
+            c.drawRightString(w - margin, y - 15, "Signature of the Student")
             
             c.showPage()
             
@@ -587,6 +622,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     formatted_branch = format_branch_name(student.get('branch_code', ''))
+    current_sem = student.get('current_sem', '-')
 
     if str(display_id).startswith("TMP-"):
         table_display_id = str(display_id).split("-")[-1]
@@ -598,12 +634,21 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     p_style.fontSize = 8
     
     photo_io = get_student_photo(display_id)
-    if photo_io:
+    has_photo = bool(photo_io)
+    
+    if has_photo:
         photo_io.seek(0)
         p_img = RLImage(photo_io, width=60, height=80)
         p_img.hAlign = 'CENTER'
         p_img.vAlign = 'MIDDLE'
         digital_col = p_img
+        
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Sem", "Student Photo"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", str(current_sem), digital_col]
+        ]
+        t1_colWidths = [85, 155, 55, 40, 40, 150]
+        
     else:
         qr = qrcode.make(PHOTO_BOOTH_URL)
         qr_io = io.BytesIO()
@@ -616,14 +661,14 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         pin = student.get('photo_pin', 'XXXX')
         login_text = f"Scan to Upload<br/>User Name: <b>{display_id}</b><br/>PIN: <b>{pin}</b>"
         digital_col = [p_img, Paragraph(login_text, p_style)]
+        physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
 
-    physical_col = Paragraph("<br/><br/><br/>Affix Physical<br/>Photo Here", p_style)
+        s_data = [
+            ["USN / Admin No.", "Student Name", "Branch", "Type", "Sem", "Digital Photo", "Physical Photo"],
+            [table_display_id, student.get('full_name',''), formatted_branch, "UG", str(current_sem), digital_col, physical_col]
+        ]
+        t1_colWidths = [80, 135, 50, 40, 30, 95, 95]
 
-    s_data = [
-        ["USN / Admin No.", "Student Name", "Branch", "Type", "Digital Photo", "Physical Photo"],
-        [table_display_id, student.get('full_name',''), formatted_branch, "UG", digital_col, physical_col]
-    ]
-    
     style_cmds = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -632,7 +677,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
     ]
 
-    t1 = Table(s_data, colWidths=[85, 145, 55, 40, 100, 100], rowHeights=[20, 115])
+    t1 = Table(s_data, colWidths=t1_colWidths, rowHeights=[20, 115])
     t1.setStyle(TableStyle(style_cmds))
     t1.wrapOn(c, w, h)
     _, t1_h = t1.wrap(w, h)
@@ -640,12 +685,15 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     y -= (t1_h + 20)
 
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin, y, "Semester Details")
     c.drawRightString(w - margin, y, f"Registration Date: {date.today().strftime('%d-%m-%Y')}")
-    y -= 20
+    y -= 15
 
     c.drawString(margin, y, "Courses Registered")
     y -= 5
+
+    p_style_code = getSampleStyleSheet()['Normal']
+    p_style_code.fontSize = 9
+    p_style_code.leading = 11
 
     c_data = [["Course Code", "Course Title", "Previous Grade", "Fee (Rs)", "Apply"]]
     
@@ -661,8 +709,11 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         elif "Rule 3" in rule: fee_str, prev_grade = "600", "F"
         else: fee_str, prev_grade = "-", crs.get('grade', '-')
 
+        raw_code = str(crs.get('course_code', ''))
+        safe_code = raw_code.replace('/', '/ ')
+
         c_data.append([
-            crs['course_code'], 
+            Paragraph(safe_code, p_style_code), 
             Paragraph(crs.get('course_title','Unknown'), getSampleStyleSheet()['Normal']), 
             prev_grade, fee_str, "Applied" 
         ])
@@ -724,9 +775,13 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         else: c.drawString(margin + 120, y, "__________________________________________________")
         y -= 30
 
+    # 2 lines of space for signature
+    y -= 40 
+
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, f"Date: {date.today().strftime('%d-%m-%Y')}")
-    c.drawRightString(w - margin, y, "Signature of Student")
+    c.drawRightString(w - margin, y, "_________________________")
+    c.drawRightString(w - margin, y - 15, "Signature of Student")
     
     c.save()
     return buf.getvalue()
