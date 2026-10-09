@@ -890,8 +890,8 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                # Categorize the subjects safely mapped to this branch/scheme
-                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT'] and int(c.get('scheme_batch', 25)) == student_scheme]
+                                # Categorize the subjects safely mapped to this branch/scheme. 'PROJECT' is included here.
+                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT'] and int(c.get('scheme_batch', 25)) == student_scheme]
                                 lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
@@ -899,7 +899,7 @@ def department_dashboard():
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
-                                st.markdown("### 1. Mandatory Core, Lab & Non-Credit Courses")
+                                st.markdown("### 1. Mandatory Core, Lab, Project & Non-Credit Courses")
                                 if not core_courses:
                                     st.warning("No core courses found for this semester.")
                                 for core in core_courses:
@@ -1010,8 +1010,8 @@ def department_dashboard():
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        # Note: 'core_courses' now explicitly includes LAB and NON CREDIT types as well!
-                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT']]
+                        # Note: 'core_courses' now explicitly includes LAB, NON CREDIT, and PROJECT types!
+                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT']]
                         lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
