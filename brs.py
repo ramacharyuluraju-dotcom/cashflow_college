@@ -945,8 +945,8 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                # Categorize the subjects safely mapped to this branch/scheme. 'PROJECT' is successfully included here.
-                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT'] and int(c.get('scheme_batch', 25)) == student_scheme]
+                                # 🟢 FIXED: Added 'OMR' to the CORE type filtering list
+                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR'] and int(c.get('scheme_batch', 25)) == student_scheme]
                                 lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme]
                                 
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
@@ -954,7 +954,7 @@ def department_dashboard():
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
-                                st.markdown("### 1. Mandatory Core, Lab, Project & Non-Credit Courses")
+                                st.markdown("### 1. Mandatory Core, Lab, Project, OMR & Non-Credit Courses")
                                 if not core_courses:
                                     st.warning("No core courses found for this semester.")
                                 for core in core_courses:
@@ -1040,7 +1040,7 @@ def department_dashboard():
                         stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, is_lateral").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
-                        # 🟢 Extract unique sections dynamically
+                        # Extract unique sections dynamically
                         available_sections = sorted(list(set([str(s.get('section', 'Unassigned')).strip().upper() for s in all_branch_stu if s.get('section')])))
                         
                     if not all_branch_stu:
@@ -1065,8 +1065,8 @@ def department_dashboard():
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        # Note: 'core_courses' explicitly includes PROJECT type here as well!
-                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT']]
+                        # 🟢 FIXED: Added 'OMR' to the CORE type filtering list here as well
+                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
                         lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
@@ -1081,7 +1081,6 @@ def department_dashboard():
                             
                             active_ids = [s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number') for s in valid_stu]
                             
-                            # 🟢 Chunk the check query to safely bypass the 1,000-row API limit
                             registered_data = []
                             for i in range(0, len(active_ids), 50):
                                 chunk_ids = active_ids[i:i+50]
@@ -1131,10 +1130,7 @@ def department_dashboard():
                                         is_lateral = bool(s.get('is_lateral', False))
                                         processed_ids.append(active_id)
                                         
-                                        # Base subjects for everyone
                                         student_assigned_courses = list(core_courses)
-                                        
-                                        # Slip in Lateral math if they are a lateral student
                                         if is_lateral:
                                             student_assigned_courses.extend(lateral_courses)
                                         
