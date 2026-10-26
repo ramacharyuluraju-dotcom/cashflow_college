@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import hashlib
 import calendar
 import io
 import os
@@ -36,9 +35,6 @@ try:
 except Exception as e:
     st.warning("⚠️ Supabase is not connected yet. Add your URL and Key to Streamlit secrets.")
     st.stop()
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -788,78 +784,67 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
 # ==========================================
 def login_screen():
     st.title("🔒 College Finance & Academic Portal")
-    st.markdown("Please log in to access the system.")
+    st.markdown("Please select your role and log in.")
+    
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
         with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Login", use_container_width=True):
-                try:
-                    res = supabase.table("app_users").select("*").eq("username", username.strip().lower()).eq("password_hash", hash_password(password.strip())).execute()
-                    if len(res.data) > 0:
+            role_choice = st.radio("Login As:", ["Student", "Staff / Faculty", "System Admin"], horizontal=True)
+            
+            if role_choice == "Student":
+                username = st.text_input("USN / Admission No.")
+                password = st.text_input("4-Digit PIN", type="password")
+            elif role_choice == "Staff / Faculty":
+                username = st.text_input("Email Address")
+                password = st.text_input("4-Digit PIN", type="password")
+            else:
+                username = st.text_input("Admin Username")
+                password = st.text_input("Admin Password", type="password")
+
+            if st.form_submit_button("Secure Login", use_container_width=True):
+                username_clean = username.strip().upper()
+                password_clean = password.strip()
+                
+                if role_choice == "System Admin":
+                    admin_u = str(st.secrets.get("admin", {}).get("username", "AMC_COE_ADMIN"))
+                    admin_p = str(st.secrets.get("admin", {}).get("pin", "9999"))
+                    if username.strip() == admin_u and password_clean == admin_p:
                         st.session_state.logged_in = True
-                        st.session_state.username = res.data[0]['username']
-                        st.session_state.role = res.data[0]['role']
+                        st.session_state.username = admin_u
+                        st.session_state.role = "admin"
                         st.rerun()
-                    else: st.error("❌ Invalid Credentials")
-                except Exception as e: st.error(f"Error: {e}")
+                    else: st.error("❌ Invalid Admin Credentials")
+                    
+                elif role_choice == "Student":
+                    try:
+                        res = supabase.table("master_students").select("full_name").eq("usn", username_clean).eq("photo_pin", password_clean).execute()
+                        if not res.data:
+                            res = supabase.table("master_students").select("full_name").eq("admission_number", username_clean).eq("photo_pin", password_clean).execute()
+                            
+                        if len(res.data) > 0:
+                            st.session_state.logged_in = True
+                            st.session_state.username = res.data[0]['full_name']
+                            st.session_state.role = "student"
+                            st.rerun()
+                        else: st.error("❌ Invalid USN or PIN")
+                    except Exception as e: st.error(f"Error: {e}")
+                    
+                elif role_choice == "Staff / Faculty":
+                    try:
+                        res = supabase.table("master_staff").select("full_name").eq("email", username.strip().lower()).eq("staff_pin", password_clean).execute()
+                        if len(res.data) > 0:
+                            st.session_state.logged_in = True
+                            st.session_state.username = res.data[0]['full_name']
+                            st.session_state.role = "department"
+                            st.rerun()
+                        else: st.error("❌ Invalid Email or PIN")
+                    except Exception as e: st.error(f"Error: {e}")
 
 # ==========================================
-# VIEW 1: CLERK DATA ENTRY DASHBOARD
+# VIEW 1: CLERK DATA ENTRY DASHBOARD (Retired)
 # ==========================================
 def clerk_dashboard():
-    st.title("📝 Desk Entry: Payment Synchronization")
-    st.markdown(f"Logged in as: **{st.session_state.username}** (Clerk)")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("### Student Details")
-        usn = st.text_input("Student USN (e.g., 1AM24CS099)")
-        student_name = st.text_input("Student Name")
-        branch = st.selectbox("Branch", ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ME", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"])
-    with col2:
-        st.markdown("### Payment Details")
-        payment_date = st.date_input("Date of Payment", date.today())
-        amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0)
-        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "Other"])
-        other_description = st.text_input("Specify Other Fee", max_chars=12) if payment_type == "Other" else ""
-    with col3:
-        st.markdown("### Transaction Details")
-        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)", "SBI Direct"])
-        utr = st.text_input("Transaction ID / UTR No.")
-        college_account = st.text_input("Credited To A/C (Bank details)")
-        
-    if st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True):
-        final_payment_type = f"Other - {other_description.strip()}" if payment_type == "Other" else payment_type
-        clean_utr = utr.strip().upper()
-        
-        if not usn or not student_name or not clean_utr or not college_account: 
-            st.error("⚠️ Missing mandatory fields!")
-        elif payment_mode == "UPI (QR / App)" and (not clean_utr.isdigit() or len(clean_utr) != 12): 
-            st.error("❌ UPI UTR must be 12 digits!")
-        elif payment_mode == "Bank Transfer (NEFT / RTGS)" and (not clean_utr.isalnum() or len(clean_utr) != 22): 
-            st.error("❌ NEFT UTR must be 22 characters!")
-        elif payment_mode == "SBI Direct" and not clean_utr.isalnum():
-            st.error("❌ SBI Direct Transaction ID must be alphanumeric!")
-        else:
-            try:
-                supabase.table("cash_receipts").insert({
-                    "payment_date": str(payment_date), 
-                    "amount": amount, 
-                    "utr_number": clean_utr, 
-                    "payment_type": final_payment_type, 
-                    "college_account": college_account.strip(), 
-                    "payment_mode": payment_mode, 
-                    "usn": usn.strip().upper(), 
-                    "student_name": student_name.strip().title(), 
-                    "branch": branch, 
-                    "entered_by": st.session_state.username
-                }).execute()
-                st.success(f"✅ Receipt saved successfully for {usn.strip().upper()} via {payment_mode}!")
-            except Exception as e: 
-                st.error(f"❌ Duplicate UTR or Database Error: {e}")
+    st.warning("Clerk dashboard is currently disabled. Please contact COE Admin.")
 
 # ==========================================
 # VIEW 2: DEPARTMENT PORTAL (DUAL-WRITE ENABLED)
@@ -902,7 +887,6 @@ def department_dashboard():
                     current_sem = int(stu.get('current_sem', 1))
                     student_scheme = int(stu.get('scheme_batch', 25))
                     
-                    # 🟢 UPDATED: Parse new category logic for single entry
                     stu_category = str(stu.get('student_category', 'REGULAR')).strip().upper()
                     student_is_lateral = (stu_category == "LATERAL ENTRY")
                     
@@ -939,7 +923,6 @@ def department_dashboard():
                                 br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
                                 prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                                 
-                                # 🟢 Generate dynamic badge based on student category
                                 if stu_category == 'REGULAR': lat_badge = ""
                                 elif stu_category == 'LATERAL ENTRY': lat_badge = " | 🎓 **Lateral Entry**"
                                 elif stu_category == 'YEAR BACK STUDENT': lat_badge = " | ↩️ **Year Back Student**"
@@ -1042,7 +1025,6 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        # Fetch all students in this branch/sem
                         stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, student_category").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
@@ -1131,7 +1113,6 @@ def department_dashboard():
                                     for s in valid_stu:
                                         active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
                                         
-                                        # 🟢 UPDATED: Parse category for bulk processing
                                         s_cat = str(s.get('student_category', 'REGULAR')).strip().upper()
                                         is_lateral = (s_cat == "LATERAL ENTRY")
                                         
@@ -1457,7 +1438,7 @@ def department_dashboard():
 # ==========================================
 def admin_dashboard():
     st.title("📊 Admin Consolidation Panel")
-    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "☀️ Summer Fee Reports"])
+    tab1, tab3 = st.tabs(["📥 Download Cash Book", "☀️ Summer Fee Reports"])
     
     with tab1:
         c1, c2 = st.columns(2)
@@ -1470,17 +1451,6 @@ def admin_dashboard():
                 st.dataframe(df, use_container_width=True)
                 st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode('utf-8'), f"CashBook_{start_date}_to_{end_date}.csv", "text/csv")
             else: st.info("No records found.")
-            
-    with tab2:
-        with st.form("create_user_form"):
-            new_user = st.text_input("New Username")
-            new_pass = st.text_input("Temporary Password", type="password")
-            new_role = st.selectbox("Role", ["clerk", "department", "admin"])
-            if st.form_submit_button("Create User") and new_user and new_pass:
-                try:
-                    supabase.table("app_users").insert({"username": new_user.lower(), "password_hash": hash_password(new_pass), "role": new_role}).execute()
-                    st.success(f"User created with '{new_role}' role.")
-                except: st.error("Error creating user.")
                 
     with tab3:
         st.subheader("Download Institutional Summer Fee Report")
@@ -1543,6 +1513,7 @@ def main():
         if role == 'admin': admin_dashboard()
         elif role == 'clerk': clerk_dashboard()
         elif role == 'department': department_dashboard()
+        elif role == 'student': st.success("🎓 Welcome! The dedicated Student Portal is currently under construction. Please check back later.")
 
 if __name__ == "__main__":
     main()
