@@ -918,8 +918,11 @@ def department_dashboard():
                     
                     current_sem = int(stu.get('current_sem', 1))
                     student_scheme = int(stu.get('scheme_batch', 25))
-                    student_is_lateral = bool(stu.get('is_lateral', False))
                     stu_spec = str(stu.get('specialization', 'GENERAL')).strip().upper()
+                    
+                    # 🟢 FIX: Handle the is_lateral correctly via student_category
+                    cat_val = str(stu.get('student_category', '')).strip().upper()
+                    student_is_lateral = (cat_val == 'LATERAL')
                     
                     staging_check = supabase.table("course_registration_online").select("*").eq("usn", active_usn_or_admin).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
                     is_staged = staging_check.data and len(staging_check.data) > 0
@@ -1052,8 +1055,9 @@ def department_dashboard():
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
-                        # Fetch all students in this branch/sem
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, is_lateral, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        
+                        # 🟢 FIX: Replaced `is_lateral` with `student_category` in the `.select()` query
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, student_category, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
                         # Extract unique sections and specializations dynamically
@@ -1093,7 +1097,6 @@ def department_dashboard():
                         all_courses = courses_res.data if courses_res.data else []
                         
                         # Fetch all core/lateral for the branch. 
-                        # They will be filtered down to the specific student's specialization inside the assignment loop.
                         all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
                         all_lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
@@ -1155,7 +1158,11 @@ def department_dashboard():
                                     
                                     for s in valid_stu:
                                         active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
-                                        is_lateral = bool(s.get('is_lateral', False))
+                                        
+                                        # 🟢 FIX: Define is_lateral logically from student_category
+                                        cat_val = str(s.get('student_category', '')).strip().upper()
+                                        is_lateral = (cat_val == 'LATERAL')
+                                        
                                         stu_spec = str(s.get('specialization', 'GENERAL')).strip().upper()
                                         processed_ids.append(active_id)
                                         
@@ -1235,11 +1242,12 @@ def department_dashboard():
 
                                         with st.spinner("🗂️ Gathering student database records..."):
                                             try:
-                                                st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, specialization").in_("usn", csv_ids).execute()
+                                                # 🟢 FIX: Replaced is_lateral with student_category in the CSV upload query
+                                                st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, student_category, specialization").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
                                                 missing = [x for x in csv_ids if x not in found_usns]
                                                 if missing:
-                                                    st_res_adm = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, specialization").in_("admission_number", missing).execute()
+                                                    st_res_adm = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, student_category, specialization").in_("admission_number", missing).execute()
                                                     st_res.data.extend(st_res_adm.data)
                                                     
                                                 stu_dict = {}
