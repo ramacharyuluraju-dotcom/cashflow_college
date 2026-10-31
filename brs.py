@@ -126,6 +126,11 @@ def branch_match(course_branches_str, student_branch):
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
     return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
 
+# 🟢 NEW: Match specializations precisely
+def match_specialization(course_spec, student_spec):
+    c_spec = str(course_spec).strip().upper()
+    return c_spec in ['GENERAL', 'NONE', 'NAN', '', 'NULL'] or c_spec == student_spec
+
 def generate_summer_fee_report(cycle_id, branch_code=None):
     regs_res = supabase.table("course_registration_online").select("*").eq("cycle_id", cycle_id).execute()
     if not regs_res.data: return None
@@ -208,7 +213,12 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     y -= 5
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+    
+    # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
     formatted_branch = format_branch_name(student.get('branch_code', ''))
+    stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
+    if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
+        formatted_branch += f" ({stu_spec})"
     
     if str(display_id).startswith("TMP-"):
         table_display_id = str(display_id).split("-")[-1]
@@ -426,7 +436,12 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             y -= 5
 
             display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+            
+            # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
             formatted_branch = format_branch_name(student.get('branch_code', ''))
+            stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
+            if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
+                formatted_branch += f" ({stu_spec})"
 
             if str(display_id).startswith("TMP-"):
                 table_display_id = str(display_id).split("-")[-1]
@@ -618,7 +633,13 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     y -= 5
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
+    
+    # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
     formatted_branch = format_branch_name(student.get('branch_code', ''))
+    stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
+    if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
+        formatted_branch += f" ({stu_spec})"
+
     current_sem = student.get('current_sem', '-')
 
     if str(display_id).startswith("TMP-"):
@@ -902,6 +923,7 @@ def department_dashboard():
                     current_sem = int(stu.get('current_sem', 1))
                     student_scheme = int(stu.get('scheme_batch', 25))
                     student_is_lateral = bool(stu.get('is_lateral', False))
+                    stu_spec = str(stu.get('specialization', 'GENERAL')).strip().upper()
                     
                     staging_check = supabase.table("course_registration_online").select("*").eq("usn", active_usn_or_admin).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
                     is_staged = staging_check.data and len(staging_check.data) > 0
@@ -937,17 +959,19 @@ def department_dashboard():
                                 prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
                                 
                                 lat_badge = " | 🎓 **Lateral Entry**" if student_is_lateral else ""
-                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**{lat_badge}")
+                                spec_badge = f" | 🎯 **Track:** {stu_spec}" if stu_spec not in ['GENERAL', 'NONE', 'NAN', ''] else ""
+                                
+                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**{spec_badge}{lat_badge}")
                                 
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                # 🟢 FIXED: Added 'OMR' to the CORE type filtering list
-                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR'] and int(c.get('scheme_batch', 25)) == student_scheme]
-                                lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme]
+                                # 🟢 NEW: Courses are now precisely filtered by the student's personal specialization
+                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR'] and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
                                 
-                                pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme]
-                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme]
+                                pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
@@ -1034,7 +1058,7 @@ def department_dashboard():
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
                         # Fetch all students in this branch/sem
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, is_lateral").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, is_lateral, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
                         # Extract unique sections dynamically
@@ -1062,14 +1086,15 @@ def department_dashboard():
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        # 🟢 FIXED: Added 'OMR' to the CORE type filtering list here as well
-                        core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
-                        lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
+                        # Fetch all core/lateral for the branch. 
+                        # 🟢 NEW: We will filter these down to the specific student's specialization inside the loop.
+                        all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
+                        all_lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
                         oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
                         
-                        if not core_courses:
+                        if not all_core_courses:
                             st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
                         elif not valid_stu:
                             st.warning(f"No students found in the selected section.")
@@ -1125,11 +1150,14 @@ def department_dashboard():
                                     for s in valid_stu:
                                         active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
                                         is_lateral = bool(s.get('is_lateral', False))
+                                        stu_spec = str(s.get('specialization', 'GENERAL')).strip().upper()
                                         processed_ids.append(active_id)
                                         
-                                        student_assigned_courses = list(core_courses)
+                                        # 🟢 NEW: Filter the global core list so it only assigns courses meant for THIS student's specialization
+                                        student_assigned_courses = [c for c in all_core_courses if match_specialization(c.get('specialization'), stu_spec)]
+                                        
                                         if is_lateral:
-                                            student_assigned_courses.extend(lateral_courses)
+                                            student_assigned_courses.extend([c for c in all_lateral_courses if match_specialization(c.get('specialization'), stu_spec)])
                                         
                                         pdf_courses = []
                                         for c in student_assigned_courses:
@@ -1202,11 +1230,11 @@ def department_dashboard():
 
                                         with st.spinner("🗂️ Gathering student database records..."):
                                             try:
-                                                st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("usn", csv_ids).execute()
+                                                st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, specialization").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
                                                 missing = [x for x in csv_ids if x not in found_usns]
                                                 if missing:
-                                                    st_res_adm = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin").in_("admission_number", missing).execute()
+                                                    st_res_adm = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, specialization").in_("admission_number", missing).execute()
                                                     st_res.data.extend(st_res_adm.data)
                                                     
                                                 stu_dict = {}
