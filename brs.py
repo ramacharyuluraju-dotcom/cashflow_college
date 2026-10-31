@@ -126,7 +126,6 @@ def branch_match(course_branches_str, student_branch):
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
     return (student_branch in allowed) or ('COMMON' in allowed) or ('ALL' in allowed)
 
-# 🟢 NEW: Match specializations precisely
 def match_specialization(course_spec, student_spec):
     c_spec = str(course_spec).strip().upper()
     return c_spec in ['GENERAL', 'NONE', 'NAN', '', 'NULL'] or c_spec == student_spec
@@ -214,7 +213,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     
-    # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
     formatted_branch = format_branch_name(student.get('branch_code', ''))
     stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
     if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
@@ -437,7 +435,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
 
             display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
             
-            # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
             formatted_branch = format_branch_name(student.get('branch_code', ''))
             stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
             if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
@@ -634,7 +631,6 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     
-    # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
     formatted_branch = format_branch_name(student.get('branch_code', ''))
     stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
     if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
@@ -966,7 +962,6 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                # 🟢 NEW: Courses are now precisely filtered by the student's personal specialization
                                 core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR'] and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
                                 lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
                                 
@@ -1061,24 +1056,36 @@ def department_dashboard():
                         stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, is_lateral, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
-                        # Extract unique sections dynamically
+                        # Extract unique sections and specializations dynamically
                         available_sections = sorted(list(set([str(s.get('section', 'Unassigned')).strip().upper() for s in all_branch_stu if s.get('section')])))
+                        available_specs = sorted(list(set([str(s.get('specialization', 'GENERAL')).strip().upper() for s in all_branch_stu])))
                         
                     if not all_branch_stu:
                         st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
                     else:
                         st.divider()
-                        st.markdown("#### 🎯 Section Deployment & Filtering")
-                        st.info("Filter by section to keep PDF generation batches small (ideal for distributing physical copies to classrooms).")
+                        st.markdown("#### 🎯 Batch Deployment & Filtering")
                         
-                        b_section = st.selectbox("Select Target Section", ["-- Process Entire Branch --"] + available_sections)
+                        col_f1, col_f2 = st.columns(2)
+                        b_section = col_f1.selectbox("Filter Target Section", ["-- Process Entire Branch --"] + available_sections)
                         
-                        if b_section == "-- Process Entire Branch --":
-                            valid_stu = all_branch_stu
-                            pdf_suffix = "ALL"
+                        # 🟢 NEW: The Specialization Dropdown Filter for PG tracks
+                        if len(available_specs) > 1 or (len(available_specs) == 1 and available_specs[0] != 'GENERAL'):
+                            b_spec = col_f2.selectbox("Filter Target Specialization Track", ["-- Process All Tracks --"] + available_specs)
                         else:
-                            valid_stu = [s for s in all_branch_stu if str(s.get('section', '')).strip().upper() == b_section]
+                            b_spec = "-- Process All Tracks --"
+                            col_f2.info("Standard Curriculum (No Specialized Tracks Detected)")
+                        
+                        valid_stu = all_branch_stu
+                        pdf_suffix = "ALL"
+                        
+                        if b_section != "-- Process Entire Branch --":
+                            valid_stu = [s for s in valid_stu if str(s.get('section', '')).strip().upper() == b_section]
                             pdf_suffix = f"Sec_{b_section}"
+                            
+                        if b_spec != "-- Process All Tracks --":
+                            valid_stu = [s for s in valid_stu if str(s.get('specialization', 'GENERAL')).strip().upper() == b_spec]
+                            pdf_suffix += f"_{b_spec}"
                             
                         # Sort students alphabetically so the final PDF is in perfect order
                         valid_stu = sorted(valid_stu, key=lambda x: x.get('full_name', ''))
@@ -1087,7 +1094,7 @@ def department_dashboard():
                         all_courses = courses_res.data if courses_res.data else []
                         
                         # Fetch all core/lateral for the branch. 
-                        # 🟢 NEW: We will filter these down to the specific student's specialization inside the loop.
+                        # They will be filtered down to the specific student's specialization inside the assignment loop.
                         all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
                         all_lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
@@ -1097,9 +1104,9 @@ def department_dashboard():
                         if not all_core_courses:
                             st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
                         elif not valid_stu:
-                            st.warning(f"No students found in the selected section.")
+                            st.warning(f"No students match the selected filters.")
                         else:
-                            st.success(f"👥 Ready to process **{len(valid_stu)} Students** for {b_branch} (Section: {b_section}).")
+                            st.success(f"👥 Ready to process **{len(valid_stu)} Students** for {b_branch}.")
                             
                             active_ids = [s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number') for s in valid_stu]
                             
@@ -1114,7 +1121,7 @@ def department_dashboard():
                             
                             if registered_usns:
                                 st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
-                                if st.button(f"🖨️ Re-Download Master PDF ({b_section})", type="secondary"):
+                                if st.button(f"🖨️ Re-Download Master PDF Batch", type="secondary"):
                                     grouped_courses = defaultdict(list)
                                     for r in registered_data:
                                         grouped_courses[r['usn']].append(r['course_code'])
@@ -1153,7 +1160,6 @@ def department_dashboard():
                                         stu_spec = str(s.get('specialization', 'GENERAL')).strip().upper()
                                         processed_ids.append(active_id)
                                         
-                                        # 🟢 NEW: Filter the global core list so it only assigns courses meant for THIS student's specialization
                                         student_assigned_courses = [c for c in all_core_courses if match_specialization(c.get('specialization'), stu_spec)]
                                         
                                         if is_lateral:
