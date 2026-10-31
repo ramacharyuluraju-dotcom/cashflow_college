@@ -287,7 +287,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
         cred = float(crs.get('credits', 0))
         total_credits += cred
         
-        # Safely replace slashes with slash+space so long course codes wrap properly
         raw_code = str(crs.get('course_code', ''))
         safe_code = raw_code.replace('/', '/ ')
         
@@ -341,7 +340,6 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     _, decl_h = decl.wrap(w - (2*margin), 50)
     decl.drawOn(c, margin, y - decl_h)
     
-    # Give two lines of space for sign and date
     y -= (decl_h + 60) 
 
     c.setFont("Helvetica-Bold", 10)
@@ -556,7 +554,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             _, decl_h = decl.wrap(w - (2*margin), 50)
             decl.drawOn(c, margin, y - decl_h)
             
-            # 2 lines of space for signature
             y -= (decl_h + 60) 
 
             c.setFont("Helvetica-Bold", 10)
