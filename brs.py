@@ -833,22 +833,22 @@ def clerk_dashboard():
     
     with col1:
         st.markdown("### Student Details")
-        usn = st.text_input("Student USN (e.g., 1AM24CS099)")
-        student_name = st.text_input("Student Name")
-        branch = st.selectbox("Branch", ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ME", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"])
+        usn = st.text_input("Student USN (e.g., 1AM24CS099)", key="clerk_usn")
+        student_name = st.text_input("Student Name", key="clerk_name")
+        branch = st.selectbox("Branch", ["AE", "AIML", "CSE", "CSE-AIML", "CSE-DS", "CV", "ME", "ECE", "EEE", "ISE", "M Tech", "MBA", "MCA"], key="clerk_branch")
     with col2:
         st.markdown("### Payment Details")
-        payment_date = st.date_input("Date of Payment", date.today())
-        amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0)
-        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "Other"])
-        other_description = st.text_input("Specify Other Fee", max_chars=12) if payment_type == "Other" else ""
+        payment_date = st.date_input("Date of Payment", date.today(), key="clerk_date")
+        amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0, key="clerk_amount")
+        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "Other"], key="clerk_type")
+        other_description = st.text_input("Specify Other Fee", max_chars=12, key="clerk_other") if payment_type == "Other" else ""
     with col3:
         st.markdown("### Transaction Details")
-        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)", "SBI Direct"])
-        utr = st.text_input("Transaction ID / UTR No.")
-        college_account = st.text_input("Credited To A/C (Bank details)")
+        payment_mode = st.selectbox("Payment Mode", ["UPI (QR / App)", "Bank Transfer (NEFT / RTGS)", "SBI Direct"], key="clerk_mode")
+        utr = st.text_input("Transaction ID / UTR No.", key="clerk_utr")
+        college_account = st.text_input("Credited To A/C (Bank details)", key="clerk_acc")
         
-    if st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True):
+    if st.button("💾 Save & Sync Receipt", type="primary", use_container_width=True, key="clerk_save_btn"):
         final_payment_type = f"Other - {other_description.strip()}" if payment_type == "Other" else payment_type
         clean_utr = utr.strip().upper()
         
@@ -900,11 +900,11 @@ def department_dashboard():
     with tab_reg:
         st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester")
         
-        entry_mode = st.radio("Registration Mode:", ["👤 Single Student Entry", "🚀 Bulk Branch Auto-Registration"], horizontal=True)
+        entry_mode = st.radio("Registration Mode:", ["👤 Single Student Entry", "🚀 Bulk Branch Auto-Registration"], horizontal=True, key="reg_mode")
         st.divider()
         
         if entry_mode == "👤 Single Student Entry":
-            target_id = st.text_input("Enter Student USN or Admission Number").strip().upper()
+            target_id = st.text_input("Enter Student USN or Admission Number", key="single_target_id").strip().upper()
             if target_id:
                 stu_res = supabase.table("master_students").select("*").eq("usn", target_id).execute()
                 if not stu_res.data:
@@ -939,7 +939,7 @@ def department_dashboard():
                         } for r in reg_data]
                         
                         pdf_bytes = generate_regular_pdf(stu, reconstructed_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
-                        st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary")
+                        st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary", key="single_redl_btn")
                     else:
                         if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
                             st.error(f"❌ **Registration Blocked:** Student '{active_usn_or_admin}' is marked as DISCONTINUED.")
@@ -990,20 +990,20 @@ def department_dashboard():
                                     col_pe, col_oe = st.columns(2)
                                     if pe_courses:
                                         pe_options = {f"{p['course_code']} - {p['title']}": p['course_code'] for p in pe_courses}
-                                        chosen_pe = col_pe.selectbox("Professional Elective", ["-- Select --"] + list(pe_options.keys()))
+                                        chosen_pe = col_pe.selectbox("Professional Elective", ["-- Select --"] + list(pe_options.keys()), key="single_pe")
                                         if chosen_pe != "-- Select --":
                                             selected_codes.append(pe_options[chosen_pe])
                                             total_credits += float(next(p for p in pe_courses if p['course_code'] == pe_options[chosen_pe]).get('credits', 3))
                                     if oe_courses:
                                         oe_options = {f"{o['course_code']} [{o['branch_code']}] - {o['title']}": o['course_code'] for o in oe_courses}
-                                        chosen_oe = col_oe.selectbox("Open Elective", ["-- Select --"] + list(oe_options.keys()))
+                                        chosen_oe = col_oe.selectbox("Open Elective", ["-- Select --"] + list(oe_options.keys()), key="single_oe")
                                         if chosen_oe != "-- Select --":
                                             selected_codes.append(oe_options[chosen_oe])
                                             total_credits += float(next(o for o in oe_courses if o['course_code'] == oe_options[chosen_oe]).get('credits', 3))
                                         
                                 st.info(f"📊 **Total Credits Selected:** {total_credits}")
                                 
-                                if st.button("💾 Submit Registration & Generate PDF", type="primary"):
+                                if st.button("💾 Submit Registration & Generate PDF", type="primary", key="single_reg_btn"):
                                     if not selected_codes:
                                         st.error("❌ **Invalid Submission:** No courses were selected. Cannot submit an empty registration.")
                                     else:
@@ -1026,7 +1026,7 @@ def department_dashboard():
                                             } for cc in selected_codes]
                                             
                                             pdf_bytes = generate_regular_pdf(stu, pdf_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
-                                            st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary")
+                                            st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary", key="single_dl_new")
                                         except Exception as e:
                                             st.error(f"Database Error: {e}")
 
@@ -1040,9 +1040,9 @@ def department_dashboard():
                 branch_list = [b['branch_code'] for b in branches_data if str(b['branch_code']).upper() != 'COMMON']
             except: branch_list = []
             
-            b_branch = col_b1.selectbox("Select Branch", ["-- Select --"] + branch_list)
-            b_sem = col_b2.number_input("Target Semester", min_value=1, max_value=10, value=1)
-            b_scheme = col_b3.number_input("Scheme Batch (e.g., 25)", value=25)
+            b_branch = col_b1.selectbox("Select Branch", ["-- Select --"] + branch_list, key="bulk_branch")
+            b_sem = col_b2.number_input("Target Semester", min_value=1, max_value=10, value=1, key="bulk_sem")
+            b_scheme = col_b3.number_input("Scheme Batch (e.g., 25)", value=25, key="bulk_scheme")
             
             if b_branch != "-- Select --":
                 is_odd_sem = (b_sem % 2 != 0)
@@ -1067,11 +1067,10 @@ def department_dashboard():
                         st.markdown("#### 🎯 Batch Deployment & Filtering")
                         
                         col_f1, col_f2 = st.columns(2)
-                        b_section = col_f1.selectbox("Filter Target Section", ["-- Process Entire Branch --"] + available_sections)
+                        b_section = col_f1.selectbox("Filter Target Section", ["-- Process Entire Branch --"] + available_sections, key="bulk_sec_filter")
                         
-                        # 🟢 NEW: The Specialization Dropdown Filter for PG tracks
                         if len(available_specs) > 1 or (len(available_specs) == 1 and available_specs[0] != 'GENERAL'):
-                            b_spec = col_f2.selectbox("Filter Target Specialization Track", ["-- Process All Tracks --"] + available_specs)
+                            b_spec = col_f2.selectbox("Filter Target Specialization Track", ["-- Process All Tracks --"] + available_specs, key="bulk_spec_filter")
                         else:
                             b_spec = "-- Process All Tracks --"
                             col_f2.info("Standard Curriculum (No Specialized Tracks Detected)")
@@ -1121,7 +1120,7 @@ def department_dashboard():
                             
                             if registered_usns:
                                 st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
-                                if st.button(f"🖨️ Re-Download Master PDF Batch", type="secondary"):
+                                if st.button(f"🖨️ Re-Download Master PDF Batch", type="secondary", key="bulk_redl_btn"):
                                     grouped_courses = defaultdict(list)
                                     for r in registered_data:
                                         grouped_courses[r['usn']].append(r['course_code'])
@@ -1144,13 +1143,13 @@ def department_dashboard():
                                     pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                     
                                     status_text.success("✅ Master PDF Reconstructed Successfully!")
-                                    st.download_button("📥 Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary")
+                                    st.download_button("📥 Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary", key="bulk_redl_save")
                                 st.divider()
                             
                             if not pe_courses and not oe_courses:
                                 st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. The system will automatically handle Lateral subjects for applicable students.")
                                 
-                                if st.button(f"🚀 One-Click Auto-Register {len(valid_stu)} Students", type="primary"):
+                                if st.button(f"🚀 One-Click Auto-Register {len(valid_stu)} Students", type="primary", key="bulk_autoreg_btn"):
                                     payload_staging, payload_official, student_course_payload = [], [], []
                                     processed_ids = []
                                     
@@ -1194,15 +1193,15 @@ def department_dashboard():
                                     pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                     
                                     status_text.success("✅ Master PDF Generated Successfully!")
-                                    st.download_button("📥 Download Section PDF", data=pdf_bytes, file_name=f"Applications_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary")
+                                    st.download_button("📥 Download Section PDF", data=pdf_bytes, file_name=f"Applications_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary", key="bulk_autoreg_dl")
                             
                             else:
                                 st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each student to their chosen courses.")
                                 
                                 st.markdown("Please upload a CSV containing only **`usn`** (or admission number) and **`course_code`**. (Include both core and elective codes for each student).")
-                                b_csv = st.file_uploader("Upload Department CSV", type="csv")
+                                b_csv = st.file_uploader("Upload Department CSV", type="csv", key="bulk_csv_upload")
                                 
-                                if b_csv and st.button("🚀 Process Bulk CSV Upload", type="primary"):
+                                if b_csv and st.button("🚀 Process Bulk CSV Upload", type="primary", key="bulk_csv_btn"):
                                     df = pd.read_csv(b_csv)
                                     df.columns = [c.strip().lower() for c in df.columns]
                                     
@@ -1274,7 +1273,7 @@ def department_dashboard():
                                         pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
                                         
                                         status_text.success("✅ Master PDF Generated Successfully!")
-                                        st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary")
+                                        st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary", key="bulk_csv_dl")
 
     # --- SUMMER REGISTRATION ---
     with tab_summer:
@@ -1288,14 +1287,14 @@ def department_dashboard():
             st.info("No Summer exam cycles are currently open for BRS registration.")
         else:
             sum_cycle_options = {c['cycle_name']: c for c in summer_cycles}
-            selected_sum_cycle_name = st.selectbox("Select Target Exam Cycle (Summer):", options=list(sum_cycle_options.keys()))
+            selected_sum_cycle_name = st.selectbox("Select Target Exam Cycle (Summer):", options=list(sum_cycle_options.keys()), key="sum_cycle_sel")
             target_sum_cycle = sum_cycle_options[selected_sum_cycle_name]
             target_sum_cycle_id = target_sum_cycle['cycle_id']
             
             target_sum_ay = target_sum_cycle.get('academic_year', active_ay)
             
             st.subheader("☀️ Summer Semester Application")
-            summer_usn = st.text_input("Enter USN for Summer Semester Processing").strip().upper()
+            summer_usn = st.text_input("Enter USN for Summer Semester Processing", key="sum_usn").strip().upper()
             
             if summer_usn:
                 staging_check = supabase.table("course_registration_online").select("*").eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
@@ -1309,8 +1308,8 @@ def department_dashboard():
                     total_fee = reg_data[0].get('fee_amount', 0)
                     
                     col_u1, col_u2 = st.columns([2, 1])
-                    new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr)
-                    if col_u2.button("Update UTR Record"):
+                    new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr, key="sum_utr_upd")
+                    if col_u2.button("Update UTR Record", key="sum_utr_btn"):
                         supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", summer_usn).eq("cycle_id", target_sum_cycle_id).execute()
                         st.success("✅ UTR successfully updated in the database!")
                         st.rerun()
@@ -1331,7 +1330,7 @@ def department_dashboard():
                     student = stu_res.data[0] if stu_res.data else {'usn': summer_usn}
                     
                     pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=target_sum_ay, exam_type="Summer")
-                    st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
+                    st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary", key="sum_redl_btn")
                 else:
                     stu_res = supabase.table("master_students").select("*").eq("usn", summer_usn).execute()
                     if not stu_res.data:
@@ -1394,7 +1393,7 @@ def department_dashboard():
                                         st.markdown("### Select Eligible Summer Courses")
                                         selected_summer_courses = []
                                         for crs in eligible_summer_courses:
-                                            if st.checkbox(f"[{crs['course_code']}] {crs['course_title']} | Grade: {crs['grade']} | Rule: {crs['rule']}", value=True):
+                                            if st.checkbox(f"[{crs['course_code']}] {crs['course_title']} | Grade: {crs['grade']} | Rule: {crs['rule']}", value=True, key=f"sum_chk_{crs['course_code']}"):
                                                 selected_summer_courses.append(crs)
                                         
                                         if selected_summer_courses:
@@ -1405,7 +1404,8 @@ def department_dashboard():
                                             
                                             allow_extra_credit = st.checkbox(
                                                 "🚨 **Principal/HOD Override:** Allow 1 additional credit (Max 15)", 
-                                                help="Check this box if the student has special written permission to exceed the standard 14-credit limit."
+                                                help="Check this box if the student has special written permission to exceed the standard 14-credit limit.",
+                                                key="sum_extra_cred"
                                             )
                                             max_allowed = 15 if allow_extra_credit else 14
                                             
@@ -1413,9 +1413,9 @@ def department_dashboard():
                                                 st.error(f"❌ **Credit Limit Exceeded!** Selected {rule_1_credits} credits under Rule 1. Maximum allowed is **{max_allowed} Credits**.")
                                             else:
                                                 st.markdown("### Payment Details")
-                                                target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually.")
+                                                target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually.", key="sum_target_utr")
                                                 
-                                                if st.button("💾 Submit Registration & Generate PDF", type="primary"):
+                                                if st.button("💾 Submit Registration & Generate PDF", type="primary", key="sum_reg_btn"):
                                                     payload_staging = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": target_sum_ay, "semester_type": "SUMMER", "registration_type": "SUMMER", "rule_category": c['rule'], "fee_amount": total_fee, "payment_status": "PAID", "utr_number": target_utr.strip()} for c in selected_summer_courses]
                                                     payload_official = [{"cycle_id": target_sum_cycle_id, "usn": summer_usn, "course_code": c['course_code'], "semester": c['semester'], "academic_year": target_sum_ay, "semester_type": "SUMMER", "registration_type": "SUMMER"} for c in selected_summer_courses]
                                                     
@@ -1428,7 +1428,7 @@ def department_dashboard():
                                                         
                                                         st.success(f"✅ Application successfully registered and sent directly to the COE!")
                                                         pdf_bytes = generate_summer_pdf(student, selected_summer_courses, total_fee, target_utr, academic_year=target_sum_ay, exam_type="Summer")
-                                                        st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary")
+                                                        st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Summer_Application_{summer_usn}.pdf", mime="application/pdf", type="primary", key="sum_pdf_dl")
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
 
@@ -1457,7 +1457,7 @@ def department_dashboard():
             sel_cycle_name = col_r1.selectbox("Select Target Exam Cycle:", list(cycle_opts.keys()), key="dept_rep_cycle")
             sel_branch = col_r2.selectbox("Filter by Branch:", ["-- All Branches --"] + branch_list, key="dept_rep_branch")
             
-            if st.button("📥 Generate Department Report", type="primary"):
+            if st.button("📥 Generate Department Report", type="primary", key="dept_rep_btn"):
                 with st.spinner("Compiling fee collection data..."):
                     df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name], branch_code=sel_branch if sel_branch != "-- All Branches --" else None)
                     
@@ -1471,7 +1471,8 @@ def department_dashboard():
                             data=csv_data, 
                             file_name=f"Summer_Fee_Report_{sel_branch}_{sel_cycle_name}.csv", 
                             mime="text/csv",
-                            type="primary"
+                            type="primary",
+                            key="dept_rep_dl"
                         )
                     else:
                         st.warning("No online summer registrations found for the selected criteria.")
@@ -1487,12 +1488,12 @@ def admin_dashboard():
         c1, c2 = st.columns(2)
         start_date = c1.date_input("From Date", date.today().replace(day=1))
         end_date = c2.date_input("To Date", date.today())
-        if st.button("Fetch Data"):
+        if st.button("Fetch Data", key="admin_fetch"):
             res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
             if res.data:
                 df = pd.DataFrame(res.data)
                 st.dataframe(df, use_container_width=True)
-                st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode('utf-8'), f"CashBook_{start_date}_to_{end_date}.csv", "text/csv")
+                st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode('utf-8'), f"CashBook_{start_date}_to_{end_date}.csv", "text/csv", key="admin_dl_cb")
             else: st.info("No records found.")
             
     with tab2:
@@ -1521,7 +1522,7 @@ def admin_dashboard():
             cycle_opts = {c['cycle_name']: c['cycle_id'] for c in summer_cycles}
             sel_cycle_name = st.selectbox("Select Summer Cycle:", list(cycle_opts.keys()), key="admin_rep_cycle")
             
-            if st.button("📥 Generate Institutional Report", type="primary"):
+            if st.button("📥 Generate Institutional Report", type="primary", key="admin_rep_btn"):
                 with st.spinner("Compiling institutional fee collection data..."):
                     df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name])
                     
@@ -1541,7 +1542,8 @@ def admin_dashboard():
                             data=csv_data, 
                             file_name=f"Institutional_Summer_Fees_{sel_cycle_name}.csv", 
                             mime="text/csv",
-                            type="primary"
+                            type="primary",
+                            key="admin_rep_dl"
                         )
                     else:
                         st.warning("No online summer registrations found for this cycle.")
@@ -1554,7 +1556,7 @@ def main():
         with st.sidebar:
             st.markdown(f"**User:** {st.session_state.username}")
             st.markdown(f"**Role:** {st.session_state.role.capitalize()}")
-            if st.button("Logout", use_container_width=True):
+            if st.button("Logout", use_container_width=True, key="sidebar_logout"):
                 st.session_state.logged_in = False
                 st.session_state.username = ''
                 st.session_state.role = ''
