@@ -87,19 +87,27 @@ def download_photo_worker(args):
         except: pass
     return usn, None
 
-def get_student_photo(usn):
-    clean_usn = re.sub(r'[^A-Z0-9]', '', usn.upper())
-    for ext in ['.jpg', '.jpeg', '.png', '.webp', '.JPG']:
-        try:
-            res = supabase.storage.from_("StakeHolders_Photos").download(f"{clean_usn}{ext}")
-            if res:
-                img = PILImage.open(io.BytesIO(res))
-                if img.mode != 'RGB': img = img.convert('RGB')
-                clean_io = io.BytesIO()
-                img.save(clean_io, format='JPEG', quality=95)
-                clean_io.seek(0)
-                return clean_io
-        except: pass
+# 🟢 FALLBACK TO ADMISSION NUMBER IF USN MIGRATED
+def get_student_photo(usn, admission_number=None):
+    ids_to_check = [str(usn).upper()]
+    if admission_number and pd.notna(admission_number):
+        ids_to_check.append(str(admission_number).upper())
+        
+    for current_id in ids_to_check:
+        if not current_id or current_id == 'NAN': continue
+        clean_id = re.sub(r'[^A-Z0-9]', '', current_id)
+        
+        for ext in ['.jpg', '.jpeg', '.png', '.webp', '.JPG']:
+            try:
+                res = supabase.storage.from_("StakeHolders_Photos").download(f"{clean_id}{ext}")
+                if res:
+                    img = PILImage.open(io.BytesIO(res))
+                    if img.mode != 'RGB': img = img.convert('RGB')
+                    clean_io = io.BytesIO()
+                    img.save(clean_io, format='JPEG', quality=95)
+                    clean_io.seek(0)
+                    return clean_io
+            except: pass
     return None
 
 def sort_courses_by_sequence(course_list):
@@ -213,6 +221,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
 
     display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
     
+    # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
     formatted_branch = format_branch_name(student.get('branch_code', ''))
     stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
     if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
@@ -227,7 +236,7 @@ def generate_regular_pdf(student, courses, academic_year="2026-27", term="ODD", 
     p_style.alignment = 1 
     p_style.fontSize = 8
     
-    photo_io = get_student_photo(display_id)
+    photo_io = get_student_photo(display_id, student.get('admission_number'))
     has_photo = bool(photo_io)
     
     if has_photo:
@@ -390,7 +399,14 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
 
     for i in range(0, total, BATCH_SIZE):
         batch_items = student_course_list[i : i + BATCH_SIZE]
-        batch_usns = [item['student'].get('admission_number') if pd.isna(item['student'].get('usn')) or item['student'].get('usn') == '' else item['student'].get('usn') for item in batch_items]
+        
+        # We need the usn directly from the student record to fallback appropriately
+        batch_usns = []
+        for item in batch_items:
+            # Prefer official USN in bulk rendering; download logic will fallback anyway
+            u = item['student'].get('usn')
+            if pd.isna(u) or u == '': u = item['student'].get('admission_number')
+            batch_usns.append(u)
         
         if status_text:
             status_text.info(f"🖨️ Rendering PDFs: Processing Batch {i//BATCH_SIZE + 1} ({min(i+BATCH_SIZE, total)}/{total} students)...")
@@ -435,6 +451,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
 
             display_id = student.get('admission_number') if pd.isna(student.get('usn')) or student.get('usn') == '' else student.get('usn')
             
+            # 🟢 DYNAMIC BRANCH + SPECIALIZATION FORMATTING
             formatted_branch = format_branch_name(student.get('branch_code', ''))
             stu_spec = str(student.get('specialization', 'GENERAL')).strip().upper()
             if stu_spec not in ['GENERAL', 'NONE', 'NAN', '']:
@@ -449,7 +466,11 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             p_style.alignment = 1 
             p_style.fontSize = 8
             
+            # Fallback locally if batch_photos missed due to admission_number mapping
             photo_io = batch_photos.get(display_id)
+            if not photo_io:
+                photo_io = get_student_photo(display_id, student.get('admission_number'))
+                
             has_photo = bool(photo_io)
             
             if has_photo:
@@ -647,7 +668,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     p_style.alignment = 1 
     p_style.fontSize = 8
     
-    photo_io = get_student_photo(display_id)
+    photo_io = get_student_photo(display_id, student.get('admission_number'))
     has_photo = bool(photo_io)
     
     if has_photo:
@@ -920,7 +941,6 @@ def department_dashboard():
                     student_scheme = int(stu.get('scheme_batch', 25))
                     stu_spec = str(stu.get('specialization', 'GENERAL')).strip().upper()
                     
-                    # 🟢 FIX: Handle the is_lateral correctly via student_category
                     cat_val = str(stu.get('student_category', '')).strip().upper()
                     student_is_lateral = (cat_val == 'LATERAL')
                     
@@ -1056,11 +1076,9 @@ def department_dashboard():
                 else:
                     with st.spinner("Analyzing curriculum and active students..."):
                         
-                        # 🟢 FIX: Replaced `is_lateral` with `student_category` in the `.select()` query
                         stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, student_category, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
                         
-                        # Extract unique sections and specializations dynamically
                         available_sections = sorted(list(set([str(s.get('section', 'Unassigned')).strip().upper() for s in all_branch_stu if s.get('section')])))
                         available_specs = sorted(list(set([str(s.get('specialization', 'GENERAL')).strip().upper() for s in all_branch_stu])))
                         
@@ -1090,13 +1108,11 @@ def department_dashboard():
                             valid_stu = [s for s in valid_stu if str(s.get('specialization', 'GENERAL')).strip().upper() == b_spec]
                             pdf_suffix += f"_{b_spec}"
                             
-                        # Sort students alphabetically so the final PDF is in perfect order
                         valid_stu = sorted(valid_stu, key=lambda x: x.get('full_name', ''))
                         
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        # Fetch all core/lateral for the branch. 
                         all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
                         all_lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
@@ -1159,7 +1175,6 @@ def department_dashboard():
                                     for s in valid_stu:
                                         active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
                                         
-                                        # 🟢 FIX: Define is_lateral logically from student_category
                                         cat_val = str(s.get('student_category', '')).strip().upper()
                                         is_lateral = (cat_val == 'LATERAL')
                                         
@@ -1242,7 +1257,6 @@ def department_dashboard():
 
                                         with st.spinner("🗂️ Gathering student database records..."):
                                             try:
-                                                # 🟢 FIX: Replaced is_lateral with student_category in the CSV upload query
                                                 st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, student_category, specialization").in_("usn", csv_ids).execute()
                                                 found_usns = [s['usn'] for s in st_res.data]
                                                 missing = [x for x in csv_ids if x not in found_usns]
