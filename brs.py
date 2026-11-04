@@ -900,7 +900,7 @@ def clerk_dashboard():
                 st.error(f"❌ Duplicate UTR or Database Error: {e}")
 
 # ==========================================
-# VIEW 2: DEPARTMENT PORTAL (DUAL-WRITE ENABLED)
+# VIEW 2: DEPARTMENT PORTAL (INTEGRATED)
 # ==========================================
 def department_dashboard():
     st.title("🏛️ Department Online Course Registration Portal")
@@ -915,19 +915,161 @@ def department_dashboard():
     active_ay = global_settings.get('active_academic_year', '2026-27')
     active_term = global_settings.get('active_term', 'ODD')
 
-    tab_reg, tab_app, tab_summer, tab_reports = st.tabs(["📝 Phase 1: Course Registration", "🎓 Phase 2: Exam Applications", "☀️ Summer Exams", "📊 Reports"])
+    tab_reg, tab_app, tab_summer, tab_reports = st.tabs([
+        "📝 Phase 1: Course Registration",
+        "🎓 Phase 2: Exam Applications",
+        "☀️ Summer Exams",
+        "📊 Reports"
+    ])
     
     # ---------------------------------------------------------
-    # TAB 1: REGULAR COURSE REGISTRATION
+    # TAB 1: REGULAR COURSE REGISTRATION (FULL FEATURES FROM brs10)
     # ---------------------------------------------------------
     with tab_reg:
         st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester")
         st.write("Register students for classes at the start of the semester.")
         
-        entry_mode = st.radio("Registration Mode:", ["🚀 Bulk Branch Auto-Registration", "👤 Single Student Entry"], horizontal=True, key="reg_mode")
+        entry_mode = st.radio(
+            "Registration Mode:",
+            ["👤 Single Student Entry", "🚀 Bulk Branch Auto-Registration"],
+            horizontal=True,
+            key="reg_mode"
+        )
         st.divider()
         
-        if entry_mode == "🚀 Bulk Branch Auto-Registration":
+        # ---------- SINGLE STUDENT ENTRY ----------
+        if entry_mode == "👤 Single Student Entry":
+            target_id = st.text_input("Enter Student USN or Admission Number", key="single_target_id").strip().upper()
+            if target_id:
+                stu_res = supabase.table("master_students").select("*").eq("usn", target_id).execute()
+                if not stu_res.data:
+                    stu_res = supabase.table("master_students").select("*").eq("admission_number", target_id).execute()
+                
+                if not stu_res.data: 
+                    st.error("Student not found in database.")
+                else:
+                    stu = stu_res.data[0]
+                    active_usn_or_admin = stu.get('usn') if pd.notna(stu.get('usn')) and stu.get('usn') != '' else stu.get('admission_number')
+                    
+                    current_sem = int(stu.get('current_sem', 1))
+                    student_scheme = int(stu.get('scheme_batch', 25))
+                    stu_spec = str(stu.get('specialization', 'GENERAL')).strip().upper()
+                    
+                    cat_val = str(stu.get('student_category', '')).strip().upper()
+                    student_is_lateral = (cat_val == 'LATERAL')
+                    
+                    staging_check = supabase.table("course_registration_online").select("*").eq("usn", active_usn_or_admin).eq("academic_year", active_ay).eq("semester", current_sem).eq("registration_type", "REGULAR").execute()
+                    is_staged = staging_check.data and len(staging_check.data) > 0
+                    
+                    if is_staged:
+                        st.success(f"✅ Student '{active_usn_or_admin}' is already registered online and is LIVE in the COE database!")
+                        reg_data = staging_check.data
+                        course_codes = [r['course_code'] for r in reg_data]
+                        crs_res = supabase.table("master_courses").select("course_code, title, credits").in_("course_code", course_codes).execute()
+                        
+                        c_info = {c['course_code']: c for c in (crs_res.data or [])}
+                        
+                        reconstructed_courses = [{
+                            'course_code': r['course_code'], 
+                            'course_title': c_info.get(r['course_code'], {}).get('title', 'Unknown'),
+                            'credits': float(c_info.get(r['course_code'], {}).get('credits', 0.0))
+                        } for r in reg_data]
+                        
+                        pdf_bytes = generate_regular_pdf(stu, reconstructed_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
+                        st.download_button("🖨️ Re-Download Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary", key="single_redl_btn")
+                    else:
+                        if str(stu.get('status', '')).strip().upper() == 'DISCONTINUED':
+                            st.error(f"❌ **Registration Blocked:** Student '{active_usn_or_admin}' is marked as DISCONTINUED.")
+                        else:
+                            is_odd_sem = (current_sem % 2 != 0)
+                            is_active_odd = (active_term.upper() == 'ODD')
+                            
+                            if is_odd_sem != is_active_odd:
+                                st.error(f"❌ **Term Mismatch Block:** The Active Term is **{active_term}**, but this student is currently mapped to **Semester {current_sem}**. They must be officially promoted in the database before they can register.")
+                            else:
+                                branch_code = stu.get('branch_code', '')
+                                br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
+                                prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
+                                
+                                lat_badge = " | 🎓 **Lateral Entry**" if student_is_lateral else ""
+                                spec_badge = f" | 🎯 **Track:** {stu_spec}" if stu_spec not in ['GENERAL', 'NONE', 'NAN', ''] else ""
+                                
+                                st.success(f"**{stu['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{current_sem}** | Scheme: **{student_scheme}**{spec_badge}{lat_badge}")
+                                
+                                courses_res = supabase.table("master_courses").select("*").execute()
+                                all_courses = courses_res.data if courses_res.data else []
+                                
+                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR'] and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                
+                                pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                oe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and not branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'OE' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                
+                                selected_codes, total_credits = [], 0.0
+                                
+                                st.markdown("### 1. Mandatory Core, Lab, Project, OMR & Non-Credit Courses")
+                                if not core_courses:
+                                    st.warning("No core courses found for this semester.")
+                                for core in core_courses:
+                                    st.markdown(f"- ✅ **{core['course_code']}** - {core['title']} *(Auto-assigned {core.get('course_type', 'CORE')})*")
+                                    selected_codes.append(core['course_code'])
+                                    total_credits += float(core.get('credits', 4))
+                                    
+                                if student_is_lateral and lateral_courses:
+                                    st.markdown("### 🎓 Additional Lateral Entry Subjects")
+                                    for lat in lateral_courses:
+                                        st.markdown(f"- ✅ **{lat['course_code']}** - {lat['title']} *(Auto-assigned LATERAL)*")
+                                        selected_codes.append(lat['course_code'])
+                                        total_credits += float(lat.get('credits', 0))
+                                    
+                                if pe_courses or oe_courses:
+                                    st.markdown("### 2. Electives")
+                                    col_pe, col_oe = st.columns(2)
+                                    if pe_courses:
+                                        pe_options = {f"{p['course_code']} - {p['title']}": p['course_code'] for p in pe_courses}
+                                        chosen_pe = col_pe.selectbox("Professional Elective", ["-- Select --"] + list(pe_options.keys()), key="single_pe")
+                                        if chosen_pe != "-- Select --":
+                                            selected_codes.append(pe_options[chosen_pe])
+                                            total_credits += float(next(p for p in pe_courses if p['course_code'] == pe_options[chosen_pe]).get('credits', 3))
+                                    if oe_courses:
+                                        oe_options = {f"{o['course_code']} [{o['branch_code']}] - {o['title']}": o['course_code'] for o in oe_courses}
+                                        chosen_oe = col_oe.selectbox("Open Elective", ["-- Select --"] + list(oe_options.keys()), key="single_oe")
+                                        if chosen_oe != "-- Select --":
+                                            selected_codes.append(oe_options[chosen_oe])
+                                            total_credits += float(next(o for o in oe_courses if o['course_code'] == oe_options[chosen_oe]).get('credits', 3))
+                                        
+                                st.info(f"📊 **Total Credits Selected:** {total_credits}")
+                                
+                                if st.button("💾 Submit Registration & Generate PDF", type="primary", key="single_reg_btn"):
+                                    if not selected_codes:
+                                        st.error("❌ **Invalid Submission:** No courses were selected. Cannot submit an empty registration.")
+                                    else:
+                                        payload_staging = [{"usn": active_usn_or_admin, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""} for cc in selected_codes]
+                                        payload_official = [{"usn": active_usn_or_admin, "course_code": cc, "semester": current_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"} for cc in selected_codes]
+                                        
+                                        try:
+                                            supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").eq("usn", active_usn_or_admin).execute()
+                                            supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("usn", active_usn_or_admin).execute()
+                                            
+                                            supabase.table("course_registration_online").insert(payload_staging).execute()
+                                            supabase.table("course_registrations").insert(payload_official).execute()
+                                            
+                                            st.success("✅ Application successfully registered and sent directly to the COE!")
+                                            
+                                            pdf_courses = [{
+                                                "course_code": cc, 
+                                                "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
+                                                "credits": next((float(c['credits']) for c in all_courses if c['course_code'] == cc), 0.0)
+                                            } for cc in selected_codes]
+                                            
+                                            pdf_bytes = generate_regular_pdf(stu, pdf_courses, academic_year=active_ay, term=active_term, current_sem=current_sem)
+                                            st.download_button("🖨️ Download Official Application PDF", data=pdf_bytes, file_name=f"Regular_Application_{active_usn_or_admin}.pdf", mime="application/pdf", type="primary", key="single_dl_new")
+                                        except Exception as e:
+                                            st.error(f"Database Error: {e}")
+
+        # ---------- BULK BRANCH AUTO-REGISTRATION ----------
+        elif entry_mode == "🚀 Bulk Branch Auto-Registration":
+            st.markdown("### Bulk Class Registration Engine")
             col_b1, col_b2, col_b3 = st.columns(3)
             
             try:
@@ -946,73 +1088,258 @@ def department_dashboard():
                 if is_odd_sem != is_active_odd:
                     st.error(f"❌ **Term Mismatch:** Cannot bulk register students into Semester {b_sem} during an {active_term} term.")
                 else:
-                    with st.spinner("Analyzing curriculum..."):
-                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, student_category, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
-                        valid_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
+                    with st.spinner("Analyzing curriculum and active students..."):
+                        
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, full_name, branch_code, photo_pin, section, student_category, specialization").eq("branch_code", b_branch).eq("current_sem", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
+                        all_branch_stu = [s for s in (stu_res.data or []) if str(s.get('status', '')).strip().upper() == 'ACTIVE']
+                        
+                        available_sections = sorted(list(set([str(s.get('section', 'Unassigned')).strip().upper() for s in all_branch_stu if s.get('section')])))
+                        available_specs = sorted(list(set([str(s.get('specialization', 'GENERAL')).strip().upper() for s in all_branch_stu])))
+                        
+                    if not all_branch_stu:
+                        st.warning(f"No ACTIVE students found in {b_branch} Semester {b_sem} (Scheme {b_scheme}).")
+                    else:
+                        st.divider()
+                        st.markdown("#### 🎯 Batch Deployment & Filtering")
+                        
+                        col_f1, col_f2 = st.columns(2)
+                        b_section = col_f1.selectbox("Filter Target Section", ["-- Process Entire Branch --"] + available_sections, key="bulk_sec_filter")
+                        
+                        if len(available_specs) > 1 or (len(available_specs) == 1 and available_specs[0] != 'GENERAL'):
+                            b_spec = col_f2.selectbox("Filter Target Specialization Track", ["-- Process All Tracks --"] + available_specs, key="bulk_spec_filter")
+                        else:
+                            b_spec = "-- Process All Tracks --"
+                            col_f2.info("Standard Curriculum (No Specialized Tracks Detected)")
+                        
+                        valid_stu = all_branch_stu
+                        pdf_suffix = "ALL"
+                        
+                        if b_section != "-- Process Entire Branch --":
+                            valid_stu = [s for s in valid_stu if str(s.get('section', '')).strip().upper() == b_section]
+                            pdf_suffix = f"Sec_{b_section}"
+                            
+                        if b_spec != "-- Process All Tracks --":
+                            valid_stu = [s for s in valid_stu if str(s.get('specialization', 'GENERAL')).strip().upper() == b_spec]
+                            pdf_suffix += f"_{b_spec}"
+                            
+                        valid_stu = sorted(valid_stu, key=lambda x: x.get('full_name', ''))
                         
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
+                        
                         all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
+                        all_lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
+                        
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
+                        oe_courses = [c for c in all_courses if not branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'OE']
                         
                         if not all_core_courses:
-                            st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}.")
+                            st.warning(f"No Core courses mapped to {b_branch} for Semester {b_sem}. Please update Master Courses.")
                         elif not valid_stu:
-                            st.warning(f"No active students match this criteria.")
+                            st.warning(f"No students match the selected filters.")
                         else:
                             st.success(f"👥 Ready to process **{len(valid_stu)} Students** for {b_branch}.")
                             
-                            if not pe_courses:
-                                if st.button(f"🚀 Auto-Register {len(valid_stu)} Students", type="primary"):
-                                    payload_official = []
+                            active_ids = [s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number') for s in valid_stu]
+                            
+                            registered_data = []
+                            for i in range(0, len(active_ids), 50):
+                                chunk_ids = active_ids[i:i+50]
+                                staging_check = supabase.table("course_registration_online").select("usn, course_code").eq("academic_year", active_ay).eq("semester", b_sem).eq("registration_type", "REGULAR").in_("usn", chunk_ids).execute()
+                                if staging_check.data:
+                                    registered_data.extend(staging_check.data)
+                                    
+                            registered_usns = list(set([r['usn'] for r in registered_data]))
+                            
+                            if registered_usns:
+                                st.success(f"✅ {len(registered_usns)} students in this selection already have active registrations.")
+                                if st.button(f"🖨️ Re-Download Master PDF Batch", type="secondary", key="bulk_redl_btn"):
+                                    grouped_courses = defaultdict(list)
+                                    for r in registered_data:
+                                        grouped_courses[r['usn']].append(r['course_code'])
+                                        
+                                    student_course_payload = []
+                                    for s in valid_stu:
+                                        s_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
+                                        if s_id in grouped_courses:
+                                            c_codes = grouped_courses[s_id]
+                                            pdf_courses = [{
+                                                "course_code": cc, 
+                                                "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
+                                                "credits": next((float(c.get('credits', 0)) for c in all_courses if c['course_code'] == cc), 0.0)
+                                            } for cc in c_codes]
+                                            student_course_payload.append({'student': s, 'courses': pdf_courses})
+                                            
+                                    status_text = st.empty()
+                                    progress_bar = st.progress(0)
+                                    
+                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
+                                    
+                                    status_text.success("✅ Master PDF Reconstructed Successfully!")
+                                    st.download_button("📥 Save Master PDF", data=pdf_bytes, file_name=f"Bulk_ReDownload_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary", key="bulk_redl_save")
+                                st.divider()
+                            
+                            if not pe_courses and not oe_courses:
+                                st.success("🌟 **Pure Core Semester Detected!** There are no electives for this batch. The system will automatically handle Lateral subjects for applicable students.")
+                                
+                                if st.button(f"🚀 One-Click Auto-Register {len(valid_stu)} Students", type="primary", key="bulk_autoreg_btn"):
+                                    payload_staging, payload_official, student_course_payload = [], [], []
                                     processed_ids = []
+                                    
                                     for s in valid_stu:
                                         active_id = s.get('usn') if pd.notna(s.get('usn')) and s.get('usn') != '' else s.get('admission_number')
+                                        
+                                        cat_val = str(s.get('student_category', '')).strip().upper()
+                                        is_lateral = (cat_val == 'LATERAL')
+                                        
                                         stu_spec = str(s.get('specialization', 'GENERAL')).strip().upper()
                                         processed_ids.append(active_id)
                                         
                                         student_assigned_courses = [c for c in all_core_courses if match_specialization(c.get('specialization'), stu_spec)]
+                                        
+                                        if is_lateral:
+                                            student_assigned_courses.extend([c for c in all_lateral_courses if match_specialization(c.get('specialization'), stu_spec)])
+                                        
+                                        pdf_courses = []
                                         for c in student_assigned_courses:
+                                            payload_staging.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
                                             payload_official.append({"usn": active_id, "course_code": c['course_code'], "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
+                                            pdf_courses.append({"course_code": c['course_code'], "course_title": c['title'], "credits": float(c.get('credits', 0))})
                                             
-                                    with st.spinner(f"☁️ Syncing records..."):
+                                        student_course_payload.append({'student': s, 'courses': pdf_courses})
+                                    
+                                    with st.spinner(f"☁️ Syncing {len(payload_staging) * 2} records to the COE Cloud Database..."):
                                         try:
                                             for i in range(0, len(processed_ids), 200):
+                                                supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", processed_ids[i:i+200]).execute()
                                                 supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", processed_ids[i:i+200]).execute()
-                                            for i in range(0, len(payload_official), 1000):
+                                            
+                                            for i in range(0, len(payload_staging), 1000):
+                                                supabase.table("course_registration_online").insert(payload_staging[i:i+1000]).execute()
                                                 supabase.table("course_registrations").insert(payload_official[i:i+1000]).execute()
+                                                
                                             st.success(f"✅ Cloud Sync Complete! Registered {len(valid_stu)} students.")
                                         except Exception as e:
-                                            st.error(f"Error: {e}")
-                            else:
-                                st.warning("Electives detected! You must upload a CSV mapping for registration.")
+                                            st.error(f"Bulk Registration Error: {e}")
+                                            st.stop() 
 
-        elif entry_mode == "👤 Single Student Entry":
-            st.info("Single student course registration is managed via CSV bulk upload if electives are present.")
+                                    status_text = st.empty()
+                                    progress_bar = st.progress(0)
+                                    
+                                    pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
+                                    
+                                    status_text.success("✅ Master PDF Generated Successfully!")
+                                    st.download_button("📥 Download Section PDF", data=pdf_bytes, file_name=f"Applications_{b_branch}_{pdf_suffix}.pdf", mime="application/pdf", type="primary", key="bulk_autoreg_dl")
+                            
+                            else:
+                                st.warning(f"⚠️ **Electives Detected.** This semester has {len(pe_courses)} PE and {len(oe_courses)} OE options. You must upload a CSV mapping each student to their chosen courses.")
+                                
+                                st.markdown("Please upload a CSV containing only **`usn`** (or admission number) and **`course_code`**. (Include both core and elective codes for each student).")
+                                b_csv = st.file_uploader("Upload Department CSV", type="csv", key="bulk_csv_upload")
+                                
+                                if b_csv and st.button("🚀 Process Bulk CSV Upload", type="primary", key="bulk_csv_btn"):
+                                    df = pd.read_csv(b_csv)
+                                    df.columns = [c.strip().lower() for c in df.columns]
+                                    
+                                    if 'usn' not in df.columns or 'course_code' not in df.columns:
+                                        st.error("CSV must contain 'usn' and 'course_code' columns.")
+                                    else:
+                                        payload_staging, payload_official = [], []
+                                        csv_ids = list(set(df['usn'].dropna().astype(str).str.strip().str.upper()))
+                                        
+                                        for _, row in df.iterrows():
+                                            u = str(row['usn']).strip().upper()
+                                            cc = str(row['course_code']).strip().upper()
+                                            if u and cc:
+                                                payload_staging.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR", "rule_category": "", "fee_amount": 0, "payment_status": "PAID", "utr_number": ""})
+                                                payload_official.append({"usn": u, "course_code": cc, "semester": b_sem, "academic_year": active_ay, "semester_type": active_term, "registration_type": "REGULAR"})
+                                        
+                                        with st.spinner(f"☁️ Syncing {len(payload_staging) * 2} rows from CSV to Cloud Database..."):
+                                            try:
+                                                for i in range(0, len(csv_ids), 200):
+                                                    supabase.table("course_registration_online").delete().eq("academic_year", active_ay).eq("semester_type", active_term).eq("registration_type", "REGULAR").in_("usn", csv_ids[i:i+200]).execute()
+                                                    supabase.table("course_registrations").delete().eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", csv_ids[i:i+200]).execute()
+                                                
+                                                for i in range(0, len(payload_staging), 1000):
+                                                    supabase.table("course_registration_online").insert(payload_staging[i:i+1000]).execute()
+                                                    supabase.table("course_registrations").insert(payload_official[i:i+1000]).execute()
+                                                    
+                                                st.success(f"✅ Successfully processed CSV and registered {len(csv_ids)} students!")
+                                            except Exception as e:
+                                                st.error(f"Upload Error: {e}")
+                                                st.stop()
+
+                                        with st.spinner("🗂️ Gathering student database records..."):
+                                            try:
+                                                st_res = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, student_category, specialization").in_("usn", csv_ids).execute()
+                                                found_usns = [s['usn'] for s in st_res.data]
+                                                missing = [x for x in csv_ids if x not in found_usns]
+                                                if missing:
+                                                    st_res_adm = supabase.table("master_students").select("usn, admission_number, full_name, branch_code, photo_pin, student_category, specialization").in_("admission_number", missing).execute()
+                                                    st_res.data.extend(st_res_adm.data)
+                                                    
+                                                stu_dict = {}
+                                                for s in st_res.data:
+                                                    if s.get('usn'): stu_dict[s['usn']] = s
+                                                    if s.get('admission_number'): stu_dict[s['admission_number']] = s
+                                                    
+                                                grouped_courses = defaultdict(list)
+                                                for p in payload_staging:
+                                                    grouped_courses[p['usn']].append(p['course_code'])
+                                                    
+                                                student_course_payload = []
+                                                for uid, c_codes in grouped_courses.items():
+                                                    s = stu_dict.get(uid)
+                                                    if not s: continue
+                                                    
+                                                    pdf_courses = [{
+                                                        "course_code": cc, 
+                                                        "course_title": next((c['title'] for c in all_courses if c['course_code'] == cc), "Unknown"),
+                                                        "credits": next((float(c['credits']) for c in all_courses if c['course_code'] == cc), 0.0)
+                                                    } for cc in c_codes]
+                                                    
+                                                    student_course_payload.append({'student': s, 'courses': pdf_courses})
+                                            except Exception as e:
+                                                st.error(f"Data mapping error: {e}")
+                                                st.stop()
+                                        
+                                        status_text = st.empty()
+                                        progress_bar = st.progress(0)
+                                        
+                                        pdf_bytes = generate_regular_pdf_bulk(student_course_payload, academic_year=active_ay, term=active_term, current_sem=b_sem, progress_bar=progress_bar, status_text=status_text)
+                                        
+                                        status_text.success("✅ Master PDF Generated Successfully!")
+                                        st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary", key="bulk_csv_dl")
 
     # ---------------------------------------------------------
-    # TAB 2: EXAM APPLICATIONS (Pre-Exam Eligibility & Arrears)
+    # TAB 2: EXAM APPLICATIONS (FROM brs11)
     # ---------------------------------------------------------
     with tab_app:
         try:
             cycles_res = supabase.table("exam_cycles").select("*").eq("is_active", True).eq("is_brs_active", True).execute()
-            active_cycles = [c for c in cycles_res.data if str(c.get('exam_type', '')).strip().upper() != 'SUMMER']
-        except: active_cycles = []
+            active_cycles = [c for c in (cycles_res.data or []) if str(c.get('exam_type', '')).strip().upper() != 'SUMMER']
+        except:
+            active_cycles = []
         
         if not active_cycles:
             st.warning("No Regular Exam Cycles are currently open for applications.")
         else:
             c_opts = {c['cycle_name']: c for c in active_cycles}
-            sel_cycle_name = st.selectbox("Select Target Exam Cycle:", list(c_opts.keys()))
+            sel_cycle_name = st.selectbox("Select Target Exam Cycle:", list(c_opts.keys()), key="exam_cycle_sel")
             target_cycle = c_opts[sel_cycle_name]
             target_cycle_id = target_cycle['cycle_id']
             
             # 🟢 Determine Cycle Parity (1 for ODD, 0 for EVEN)
             cycle_parity = 1 if active_term.upper() == 'ODD' else 0
             
-            st.info(f"The Exam Application establishes financial eligibility and locks the student into the {sel_cycle_name} cycle.")
+            st.info(f"The Exam Application establishes financial eligibility and locks the student into the **{sel_cycle_name}** cycle.")
             
-            app_mode = st.radio("Application Mode:", ["🚀 Bulk Initialize Regular Exam Applications", "👤 Process Arrear Student (Custom)"], horizontal=True)
+            app_mode = st.radio(
+                "Application Mode:",
+                ["🚀 Bulk Initialize Regular Exam Applications", "👤 Process Arrear Student (Custom)"],
+                horizontal=True,
+                key="app_mode"
+            )
             st.divider()
             
             if app_mode == "🚀 Bulk Initialize Regular Exam Applications":
@@ -1022,17 +1349,18 @@ def department_dashboard():
                 try:
                     branches_data = supabase.table("master_branches").select("branch_code").execute().data
                     branch_list = [b['branch_code'] for b in branches_data if str(b['branch_code']).upper() != 'COMMON']
-                except: branch_list = []
+                except:
+                    branch_list = []
                 
                 a_branch = col_a1.selectbox("Select Branch:", ["-- Select --"] + branch_list, key="app_branch")
                 a_sem = col_a2.number_input("Target Semester:", min_value=1, max_value=10, value=1, key="app_sem")
                 
-                if a_branch != "-- Select --" and st.button("🚀 Bulk Initialize Applications", type="primary"):
+                if a_branch != "-- Select --" and st.button("🚀 Bulk Initialize Applications", type="primary", key="bulk_init_app_btn"):
                     with st.spinner("Initializing applications for all active students..."):
                         
                         # 1. Fetch Active Students
                         stu_res = supabase.table("master_students").select("usn, status").eq("branch_code", a_branch).eq("current_sem", str(a_sem)).execute()
-                        active_usns = [s['usn'] for s in (stu_res.data or []) if str(s.get('status', 'ACTIVE')).upper() == 'ACTIVE']
+                        active_usns = [s['usn'] for s in (stu_res.data or []) if str(s.get('status', 'ACTIVE')).upper() == 'ACTIVE' and s.get('usn')]
                         
                         if not active_usns:
                             st.error("No active students found in this branch/semester.")
@@ -1047,7 +1375,8 @@ def department_dashboard():
                                 try:
                                     fee_res = supabase.table("master_fees").select("amount").eq("fee_type", "Exam").execute()
                                     base_fee = float(fee_res.data[0]['amount']) if fee_res.data else 2000.0
-                                except: base_fee = 2000.0
+                                except:
+                                    base_fee = 2000.0
                                 
                                 payload = []
                                 for u in registered_usns:
@@ -1122,8 +1451,9 @@ def department_dashboard():
                                     
                             try:
                                 fee_res = supabase.table("master_fees").select("*").execute()
-                                fees = {f['fee_type']: float(f['amount']) for f in fee_res.data}
-                            except: fees = {'Exam': 2000, 'Arrear': 500}
+                                fees = {f['fee_type']: float(f['amount']) for f in (fee_res.data or [])}
+                            except:
+                                fees = {'Exam': 2000, 'Arrear': 500}
                                 
                             # If detained, they only pay Arrear fees. If active, they pay Base + Arrears.
                             base = fees.get('Exam', 2000) if str(student['status']).upper() == 'ACTIVE' else 0
@@ -1131,9 +1461,9 @@ def department_dashboard():
                             
                             st.info(f"💰 **Calculated Application Fee:** ₹{total_fee}")
                             
-                            utr = st.text_input("Transaction ID / UTR for Arrears:")
+                            utr = st.text_input("Transaction ID / UTR for Arrears:", key="arr_utr")
                             
-                            if st.button("💾 Submit & Lock Arrears", type="primary"):
+                            if st.button("💾 Submit & Lock Arrears", type="primary", key="arr_submit_btn"):
                                 try:
                                     supabase.table("exam_applications").delete().eq("cycle_id", target_cycle_id).eq("usn", app_usn).execute()
                                     
@@ -1325,7 +1655,9 @@ def department_dashboard():
                                                     except Exception as e:
                                                         st.error(f"Database Error: {e}")
 
-    # --- DEPARTMENT SUMMER FEE REPORT ---
+    # ---------------------------------------------------------
+    # TAB 4: REPORTS
+    # ---------------------------------------------------------
     with tab_reports:
         st.subheader("📊 Summer Semester Registration & Fee Report")
         st.info("Download a consolidated list of students who have applied for Summer Semester courses through the portal, including their fee amounts and transaction IDs.")
