@@ -129,6 +129,21 @@ def calculate_summer_fees(courses):
         elif "Rule 3" in c.get('rule', ''): total += 600
     return total
 
+def calculate_ode_fees(courses):
+    """Calculates ODE fees: Rs 6000 for Attempt 1, Rs 3000 for Attempt 2+, + Rs 100 App Fee + Rs 600 Grade Card Fee."""
+    if not courses:
+        return 0
+    app_fee = 100
+    grade_card_fee = 600
+    subject_total = 0
+    for c in courses:
+        rule_str = str(c.get('rule', '')).upper()
+        if "ATTEMPT 2" in rule_str or "SUBSEQUENT" in rule_str or c.get('attempt_num', 1) > 1:
+            subject_total += 3000
+        else:
+            subject_total += 6000
+    return subject_total + app_fee + grade_card_fee
+
 def branch_match(course_branches_str, student_branch):
     if not course_branches_str: return False
     allowed = [b.strip().upper() for b in str(course_branches_str).split(',')]
@@ -180,7 +195,7 @@ def generate_summer_fee_report(cycle_id, branch_code=None):
         
         report_data.append({
             "USN": usn, "Name": stu.get('full_name', 'Unknown'), "Branch": stu_branch,
-            "Courses Registered": course_codes, "Rules Applied": rules,
+            "Courses Registered": course_codes, "Rules / Attempts Applied": rules,
             "Total Fee Payable (Rs)": total_fee, "UTR / Transaction ID": utr
         })
         
@@ -615,7 +630,7 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
     return buf.getvalue()
 
 # ==========================================
-# SUMMER SEMESTER PDF GENERATOR 
+# SUMMER & ODE PDF GENERATOR 
 # ==========================================
 def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_year="2026-27", exam_type="Regular"):
     PHOTO_BOOTH_URL = "https://amceducationphotobhoot.streamlit.app/"
@@ -652,7 +667,10 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     y -= 65
 
     c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, y, f"Course Registration/ Exam application form- {exam_type} Semester {academic_year}")
+    if exam_type.upper() == "ODE":
+        c.drawCentredString(w/2, y, f"On-Demand Examination (ODE) Application Form - {academic_year}")
+    else:
+        c.drawCentredString(w/2, y, f"Course Registration/ Exam application form- {exam_type} Semester {academic_year}")
     y -= 20
 
     c.setFont("Helvetica-Bold", 10)
@@ -739,19 +757,28 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     p_style_code.fontSize = 9
     p_style_code.leading = 11
 
-    c_data = [["Course Code", "Course Title", "Previous Grade", "Fee (Rs)", "Apply"]]
+    third_col_header = "ODE Attempt" if exam_type.upper() == "ODE" else "Previous Grade"
+    c_data = [["Course Code", "Course Title", third_col_header, "Fee (Rs)", "Apply"]]
     
     courses = sort_courses_by_sequence(courses)
     
     rule2_count = 0
     for crs in courses:
-        rule = crs.get('rule', '')
-        if "Rule 1" in rule: fee_str, prev_grade = "5600", "NE"
+        rule = str(crs.get('rule', ''))
+        if exam_type.upper() == "ODE":
+            if "ATTEMPT 2" in rule.upper() or "SUBSEQUENT" in rule.upper() or crs.get('attempt_num', 1) > 1:
+                fee_str, prev_grade = "3000", "Attempt 2+"
+            else:
+                fee_str, prev_grade = "6000", "Attempt 1"
+        elif "Rule 1" in rule:
+            fee_str, prev_grade = "5600", "NE"
         elif "Rule 2" in rule:
             rule2_count += 1
             fee_str, prev_grade = ("2000" if rule2_count == 1 else "1000"), "AB"
-        elif "Rule 3" in rule: fee_str, prev_grade = "600", "F"
-        else: fee_str, prev_grade = "-", crs.get('grade', '-')
+        elif "Rule 3" in rule:
+            fee_str, prev_grade = "600", "F"
+        else:
+            fee_str, prev_grade = "-", crs.get('grade', '-')
 
         raw_code = str(crs.get('course_code', ''))
         safe_code = raw_code.replace('/', '/ ')
@@ -764,6 +791,10 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     
     if exam_type.upper() == "SUMMER":
         c_data.append(["", Paragraph("<b>Base Application Fee:</b>", getSampleStyleSheet()['Normal']), "", "400", ""])
+        c_data.append(["", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), "", str(total_fee) if total_fee > 0 else "-", ""])
+    elif exam_type.upper() == "ODE":
+        c_data.append(["", Paragraph("<b>Application Fee:</b>", getSampleStyleSheet()['Normal']), "", "100", ""])
+        c_data.append(["", Paragraph("<b>Grade Card Fee:</b>", getSampleStyleSheet()['Normal']), "", "600", ""])
         c_data.append(["", Paragraph("<b>Total Amount Payable:</b>", getSampleStyleSheet()['Normal']), "", str(total_fee) if total_fee > 0 else "-", ""])
 
     t2 = Table(c_data, colWidths=[110, 205, 90, 60, 60])
@@ -784,7 +815,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     c.setFont("Helvetica", 9)
     undertakings = [
         "I will strictly follow the AMCEC / VTU autonomy guidelines.",
-        "I have paid the prescribed fee." if exam_type.upper() == "SUMMER" else "I have paid my regular tuition fees."
+        "I have paid the prescribed fee." if exam_type.upper() in ["SUMMER", "ODE"] else "I have paid my regular tuition fees."
     ]
     for u in undertakings:
         c.rect(margin, y - 8, 10, 10) 
@@ -799,6 +830,13 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
         c.setFont("Helvetica", 8)
         c.drawString(margin, y, "Rule 1: Mandatory Classes (CIE Fail) | Rule 2: Exam Only (Absent) | Rule 3: Exam Only (SEE Fail / MP)")
         y -= 18
+    elif exam_type.upper() == "ODE":
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(margin, y, "Note - On-Demand Examination (ODE) Fee Structure:")
+        y -= 12
+        c.setFont("Helvetica", 8)
+        c.drawString(margin, y, "Attempt 1: Rs 6,000 / subject | Subsequent Attempts (Attempt 2+): Rs 3,000 / subject | Application Fee: Rs 100 | Grade Card Fee: Rs 600")
+        y -= 18
 
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margin, y, "Declaration:")
@@ -811,7 +849,7 @@ def generate_summer_pdf(student, courses, total_fee, utr_string="", academic_yea
     decl.drawOn(c, margin, y - decl_h)
     y -= (decl_h + 20)
 
-    if exam_type.upper() == "SUMMER":
+    if exam_type.upper() in ["SUMMER", "ODE"]:
         c.setFont("Helvetica-Bold", 10)
         c.drawString(margin, y, "Transaction ID / UTR:")
         c.setFont("Helvetica", 10)
@@ -870,7 +908,7 @@ def clerk_dashboard():
         st.markdown("### Payment Details")
         payment_date = st.date_input("Date of Payment", date.today(), key="clerk_date")
         amount = st.number_input("Amount Paid (₹)", min_value=1.0, step=100.0, key="clerk_amount")
-        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "Other"], key="clerk_type")
+        payment_type = st.selectbox("Fee Type", ["Exam Fee", "Tuition Fee", "Fine", "Revaluation fee", "Convocation fees", "Arrears fees", "Summer Semester Fee", "On-Demand Exam (ODE) Fee", "Other"], key="clerk_type")
         other_description = st.text_input("Specify Other Fee", max_chars=12, key="clerk_other") if payment_type == "Other" else ""
     with col3:
         st.markdown("### Transaction Details")
@@ -924,10 +962,11 @@ def department_dashboard():
     active_ay = global_settings.get('active_academic_year', '2026-27')
     active_term = global_settings.get('active_term', 'ODD')
 
-    tab_reg, tab_app, tab_summer, tab_reports = st.tabs([
+    tab_reg, tab_app, tab_summer, tab_ode, tab_reports = st.tabs([
         "📝 Phase 1: Course Registration",
         "🎓 Phase 2: Exam Applications",
         "☀️ Summer Exams",
+        "⚡ On-Demand (ODE)",
         "📊 Reports"
     ])
     
@@ -1321,32 +1360,32 @@ def department_dashboard():
                                         st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary", key="bulk_csv_dl")
 
     # ---------------------------------------------------------
-    # TAB 2: EXAM APPLICATIONS (PRE-EXAM ELIGIBILITY & ARREARS)
+    # TAB 2: EXAM APPLICATIONS (REGULAR & ARREARS)
     # ---------------------------------------------------------
     with tab_app:
         try:
-            # 🟢 Fetch all cycles and accept any non-Summer cycle where is_active OR is_brs_active is True
             cycles_res = supabase.table("exam_cycles").select("*").execute()
             all_cycles_data = cycles_res.data or []
             active_cycles = [
                 c for c in all_cycles_data
                 if (bool(c.get('is_active')) or bool(c.get('is_brs_active')))
-                and str(c.get('exam_type', '') or '').strip().upper() != 'SUMMER'
+                and str(c.get('exam_type', '') or '').strip().upper() not in ['SUMMER', 'ODE']
                 and 'SUMMER' not in str(c.get('cycle_name', '') or '').upper()
+                and 'ODE' not in str(c.get('cycle_name', '') or '').upper()
+                and 'ON-DEMAND' not in str(c.get('cycle_name', '') or '').upper()
             ]
         except Exception as e:
             st.error(f"Error loading exam cycles: {e}")
             active_cycles = []
         
         if not active_cycles:
-            st.warning("No Regular Exam Cycles are currently open for applications. Please ensure at least one Regular cycle is marked Active in Exam Management.")
+            st.warning("No Regular Exam Cycles are currently open for applications.")
         else:
             c_opts = {c['cycle_name']: c for c in active_cycles}
             sel_cycle_name = st.selectbox("Select Target Exam Cycle:", list(c_opts.keys()), key="exam_cycle_sel")
             target_cycle = c_opts[sel_cycle_name]
             target_cycle_id = target_cycle['cycle_id']
             
-            # 🟢 Smart Cycle Parity Detection (reads ODD/EVEN from selected cycle name/metadata first)
             cycle_term = detect_cycle_term(target_cycle, fallback_term=active_term)
             cycle_parity = 1 if cycle_term == 'ODD' else 0
             
@@ -1375,8 +1414,6 @@ def department_dashboard():
                 
                 if a_branch != "-- Select --" and st.button("🚀 Bulk Initialize Applications", type="primary", key="bulk_init_app_btn"):
                     with st.spinner("Initializing applications for all active students..."):
-                        
-                        # 1. Fetch Active Students in this branch (check both current_sem == a_sem AND students registered in course_registrations for a_sem)
                         stu_res = supabase.table("master_students").select("usn, admission_number, status, current_sem").eq("branch_code", a_branch).execute()
                         branch_active_students = [
                             s for s in (stu_res.data or [])
@@ -1392,7 +1429,6 @@ def department_dashboard():
                         if not branch_ids:
                             st.error("No active students found in this branch.")
                         else:
-                            # 2. Check who has course registrations for this semester OR this cycle_id
                             reg_rows = []
                             for i in range(0, len(branch_ids), 200):
                                 chunk = branch_ids[i:i+200]
@@ -1403,7 +1439,7 @@ def department_dashboard():
                             matching_regs = [
                                 r for r in reg_rows
                                 if (str(r.get('semester', '')) == str(a_sem) or r.get('cycle_id') == target_cycle_id)
-                                and str(r.get('registration_type', 'REGULAR')).upper() != 'ARREAR'
+                                and str(r.get('registration_type', 'REGULAR')).upper() == 'REGULAR'
                             ]
                             registered_usns = sorted(list(set([r['usn'] for r in matching_regs if r.get('usn')])))
                             
@@ -1428,7 +1464,6 @@ def department_dashboard():
                                     })
                                 
                                 try:
-                                    # Stamp cycle_id on their regular course_registrations so coe_control.py finds them
                                     for i in range(0, len(registered_usns), 200):
                                         chunk_u = registered_usns[i:i+200]
                                         supabase.table("course_registrations").update({"cycle_id": target_cycle_id}).eq("semester", a_sem).in_("usn", chunk_u).execute()
@@ -1458,7 +1493,6 @@ def department_dashboard():
                         stu_id = student.get('usn') or student.get('admission_number')
                         st.success(f"**{student['full_name']}** | Branch: {student['branch_code']} | Sem: {student['current_sem']} | Status: {student['status']}")
                         
-                        # Fetch Regular Courses (if they are ACTIVE)
                         regular_courses = []
                         if str(student['status']).upper() == 'ACTIVE':
                             regs_res = supabase.table("course_registrations").select("course_code, cycle_id, academic_year, semester_type, registration_type").eq("usn", stu_id).execute()
@@ -1468,7 +1502,6 @@ def department_dashboard():
                                         regular_courses.append(r['course_code'])
                             regular_courses = sorted(list(set(regular_courses)))
                         
-                        # 🟢 ODD/EVEN Parity Arrear Filtering (latest attempt per course)
                         results_res = supabase.table("student_results").select("course_code, grade, is_pass, cycle_id").eq("usn", stu_id).execute()
                         raw_results = results_res.data or []
                         raw_results.sort(key=lambda x: int(x.get('cycle_id') or 0), reverse=True)
@@ -1522,7 +1555,6 @@ def department_dashboard():
                             except:
                                 fees = {'Exam': 2000, 'Arrear': 500}
                                 
-                            # If detained or no regular courses, they only pay Arrear fees. If active with regular courses, they pay Base + Arrears.
                             base = fees.get('Exam', 2000) if (str(student['status']).upper() == 'ACTIVE' and len(regular_courses) > 0) else 0
                             total_fee = base + (len(selected_arrear_codes) * fees.get('Arrear', 500))
                             
@@ -1724,144 +1756,39 @@ def department_dashboard():
                                                         st.error(f"Database Error: {e}")
 
     # ---------------------------------------------------------
-    # TAB 4: REPORTS
+    # TAB 4: ON-DEMAND EXAMINATIONS (ODE)
     # ---------------------------------------------------------
-    with tab_reports:
-        st.subheader("📊 Summer Semester Registration & Fee Report")
-        st.info("Download a consolidated list of students who have applied for Summer Semester courses through the portal, including their fee amounts and transaction IDs.")
-        
+    with tab_ode:
         try:
-            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name").eq("exam_type", "Summer").execute()
-            summer_cycles = cycles_res.data if cycles_res.data else []
-        except:
-            summer_cycles = []
-            
-        if not summer_cycles:
-            st.warning("No Summer Exam Cycles found in the database.")
+            all_c_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type, program_type, academic_year, is_active, is_brs_active").execute()
+            all_c_data = all_c_res.data or []
+            ode_cycles = [
+                c for c in all_c_data
+                if (bool(c.get('is_active')) or bool(c.get('is_brs_active')))
+                and (
+                    str(c.get('exam_type', '')).strip().upper() == 'ODE'
+                    or 'ODE' in str(c.get('cycle_name', '')).upper()
+                    or 'ON-DEMAND' in str(c.get('cycle_name', '')).upper()
+                )
+            ]
+            all_ode_cycle_ids = [
+                c['cycle_id'] for c in all_c_data
+                if str(c.get('exam_type', '')).strip().upper() == 'ODE'
+                or 'ODE' in str(c.get('cycle_name', '')).upper()
+                or 'ON-DEMAND' in str(c.get('cycle_name', '')).upper()
+            ]
+        except Exception as e:
+            st.error(f"Error loading ODE cycles: {e}")
+            ode_cycles, all_ode_cycle_ids = [], []
+
+        if not ode_cycles:
+            st.info("No On-Demand Examination (ODE) cycles are currently open for BRS registration.")
         else:
-            try:
-                branches_data = supabase.table("master_branches").select("branch_code").execute().data
-                branch_list = [b['branch_code'] for b in branches_data if str(b['branch_code']).upper() != 'COMMON']
-            except: 
-                branch_list = []
-                
-            col_r1, col_r2 = st.columns(2)
-            cycle_opts = {c['cycle_name']: c['cycle_id'] for c in summer_cycles}
-            sel_cycle_name = col_r1.selectbox("Select Target Exam Cycle:", list(cycle_opts.keys()), key="dept_rep_cycle")
-            sel_branch = col_r2.selectbox("Filter by Branch:", ["-- All Branches --"] + branch_list, key="dept_rep_branch")
-            
-            if st.button("📥 Generate Department Report", type="primary", key="dept_rep_btn"):
-                with st.spinner("Compiling fee collection data..."):
-                    df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name], branch_code=sel_branch if sel_branch != "-- All Branches --" else None)
-                    
-                    if df_report is not None and not df_report.empty:
-                        st.success(f"✅ Found {len(df_report)} student records.")
-                        st.dataframe(df_report, use_container_width=True, hide_index=True)
-                        
-                        csv_data = df_report.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="⬇️ Download CSV Report", 
-                            data=csv_data, 
-                            file_name=f"Summer_Fee_Report_{sel_branch}_{sel_cycle_name}.csv", 
-                            mime="text/csv",
-                            type="primary",
-                            key="dept_rep_dl"
-                        )
-                    else:
-                        st.warning("No online summer registrations found for the selected criteria.")
+            ode_cycle_options = {c['cycle_name']: c for c in ode_cycles}
+            selected_ode_cycle_name = st.selectbox("Select Target ODE Cycle:", options=list(ode_cycle_options.keys()), key="ode_cycle_sel")
+            target_ode_cycle = ode_cycle_options[selected_ode_cycle_name]
+            target_ode_cycle_id = target_ode_cycle['cycle_id']
+            target_ode_ay = target_ode_cycle.get('academic_year', active_ay)
 
-# ==========================================
-# VIEW 3: ADMIN DASHBOARD (SCRUTINY & EXPORT)
-# ==========================================
-def admin_dashboard():
-    st.title("📊 Admin Consolidation Panel")
-    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "☀️ Summer Fee Reports"])
-    
-    with tab1:
-        c1, c2 = st.columns(2)
-        start_date = c1.date_input("From Date", date.today().replace(day=1))
-        end_date = c2.date_input("To Date", date.today())
-        if st.button("Fetch Data", key="admin_fetch"):
-            res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
-            if res.data:
-                df = pd.DataFrame(res.data)
-                st.dataframe(df, use_container_width=True)
-                st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode('utf-8'), f"CashBook_{start_date}_to_{end_date}.csv", "text/csv", key="admin_dl_cb")
-            else: st.info("No records found.")
-            
-    with tab2:
-        with st.form("create_user_form"):
-            new_user = st.text_input("New Username")
-            new_pass = st.text_input("Temporary Password", type="password")
-            new_role = st.selectbox("Role", ["clerk", "department", "admin"])
-            if st.form_submit_button("Create User") and new_user and new_pass:
-                try:
-                    supabase.table("app_users").insert({"username": new_user.lower(), "password_hash": hash_password(new_pass), "role": new_role}).execute()
-                    st.success(f"User created with '{new_role}' role.")
-                except: st.error("Error creating user.")
-                
-    with tab3:
-        st.subheader("Download Institutional Summer Fee Report")
-        st.info("Generates a master list of all summer semester registrations across all branches.")
-        try:
-            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name").eq("exam_type", "Summer").execute()
-            summer_cycles = cycles_res.data if cycles_res.data else []
-        except:
-            summer_cycles = []
-            
-        if not summer_cycles:
-            st.warning("No Summer Exam Cycles found in the database.")
-        else:
-            cycle_opts = {c['cycle_name']: c['cycle_id'] for c in summer_cycles}
-            sel_cycle_name = st.selectbox("Select Summer Cycle:", list(cycle_opts.keys()), key="admin_rep_cycle")
-            
-            if st.button("📥 Generate Institutional Report", type="primary", key="admin_rep_btn"):
-                with st.spinner("Compiling institutional fee collection data..."):
-                    df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name])
-                    
-                    if df_report is not None and not df_report.empty:
-                        df_report["Total Fee Payable (Rs)"] = pd.to_numeric(df_report["Total Fee Payable (Rs)"], errors="coerce").fillna(0)
-                        total_collected = df_report["Total Fee Payable (Rs)"].sum()
-                        
-                        c1, c2 = st.columns(2)
-                        c1.metric("Total Students Registered", len(df_report))
-                        c2.metric("Estimated Fee Collection", f"₹ {total_collected:,.2f}")
-                        
-                        st.dataframe(df_report, use_container_width=True, hide_index=True)
-                        
-                        csv_data = df_report.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="⬇️ Download Full Report (CSV)", 
-                            data=csv_data, 
-                            file_name=f"Institutional_Summer_Fees_{sel_cycle_name}.csv", 
-                            mime="text/csv",
-                            type="primary",
-                            key="admin_rep_dl"
-                        )
-                    else:
-                        st.warning("No online summer registrations found for this cycle.")
-
-# ==========================================
-# MAIN ROUTING LOGIC
-# ==========================================
-def main():
-    if st.session_state.logged_in:
-        with st.sidebar:
-            st.markdown(f"**User:** {st.session_state.username}")
-            st.markdown(f"**Role:** {st.session_state.role.capitalize()}")
-            if st.button("Logout", use_container_width=True, key="sidebar_logout"):
-                st.session_state.logged_in = False
-                st.session_state.username = ''
-                st.session_state.role = ''
-                st.rerun()
-                
-    if not st.session_state.logged_in:
-        login_screen()
-    else:
-        role = st.session_state.role.lower()
-        if role == 'admin': admin_dashboard()
-        elif role == 'clerk': clerk_dashboard()
-        elif role == 'department': department_dashboard()
-
-if __name__ == "__main__":
-    main()
+            st.subheader("⚡ On-Demand Examination (ODE) Application")
+            st.caption("Fee Rules: **₹6,000 / subject** (Attempt 1) | **₹3,000 / subject** (Subsequent
