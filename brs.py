@@ -1791,4 +1791,368 @@ def department_dashboard():
             target_ode_ay = target_ode_cycle.get('academic_year', active_ay)
 
             st.subheader("⚡ On-Demand Examination (ODE) Application")
-            st.caption("Fee Rules: **₹6,000 / subject** (Attempt 1) | **₹3,000 / subject** (Subsequent
+            st.caption("Fee Rules: **₹6,000 / subject** (Attempt 1) | **₹3,000 / subject** (Subsequent Attempts) + **₹100** Application Fee + **₹600** Grade Card Fee.")
+
+            ode_usn = st.text_input("Enter USN for ODE Processing", key="ode_usn").strip().upper()
+
+            if ode_usn:
+                staging_check = supabase.table("course_registration_online").select("*").eq("usn", ode_usn).eq("cycle_id", target_ode_cycle_id).execute()
+                is_staged = staging_check.data and len(staging_check.data) > 0
+
+                if is_staged:
+                    st.success(f"✅ Student '{ode_usn}' is already registered for **{selected_ode_cycle_name}** and is LIVE in the COE database!")
+
+                    reg_data = staging_check.data
+                    current_utr = reg_data[0].get('utr_number', '') or ""
+                    total_fee = reg_data[0].get('fee_amount', 0)
+
+                    col_u1, col_u2, col_u3 = st.columns([2, 1, 1])
+                    new_utr = col_u1.text_input("Transaction ID / UTR", value=current_utr, key="ode_utr_upd")
+                    if col_u2.button("Update UTR Record", key="ode_utr_btn"):
+                        supabase.table("course_registration_online").update({"utr_number": new_utr.strip()}).eq("usn", ode_usn).eq("cycle_id", target_ode_cycle_id).execute()
+                        supabase.table("exam_applications").update({"utr_number": new_utr.strip()}).eq("usn", ode_usn).eq("cycle_id", target_ode_cycle_id).execute()
+                        st.success("✅ UTR successfully updated in the database!")
+                        st.rerun()
+
+                    if col_u3.button("🗑️ Reset & Re-Select Subjects", key="ode_reset_btn"):
+                        supabase.table("course_registration_online").delete().eq("usn", ode_usn).eq("cycle_id", target_ode_cycle_id).execute()
+                        supabase.table("course_registrations").delete().eq("usn", ode_usn).eq("cycle_id", target_ode_cycle_id).execute()
+                        supabase.table("exam_applications").delete().eq("usn", ode_usn).eq("cycle_id", target_ode_cycle_id).execute()
+                        st.rerun()
+
+                    course_codes = [r['course_code'] for r in reg_data]
+                    crs_res = supabase.table("master_courses").select("course_code, title").in_("course_code", course_codes).execute()
+                    c_titles = {c['course_code']: c['title'] for c in (crs_res.data or [])}
+
+                    reconstructed_courses = []
+                    for r in reg_data:
+                        rule_cat = str(r.get('rule_category', 'Attempt 1 (Rs 6000)'))
+                        att_num = 2 if ("ATTEMPT 2" in rule_cat.upper() or "SUBSEQUENT" in rule_cat.upper()) else 1
+                        reconstructed_courses.append({
+                            'course_code': r['course_code'],
+                            'course_title': c_titles.get(r['course_code'], 'Unknown'),
+                            'rule': rule_cat,
+                            'attempt_num': att_num
+                        })
+
+                    stu_res = supabase.table("master_students").select("*").eq("usn", ode_usn).execute()
+                    student = stu_res.data[0] if stu_res.data else {'usn': ode_usn}
+
+                    pdf_bytes = generate_summer_pdf(student, reconstructed_courses, total_fee, current_utr, academic_year=target_ode_ay, exam_type="ODE")
+                    st.download_button("🖨️ Re-Download ODE Application PDF", data=pdf_bytes, file_name=f"ODE_Application_{ode_usn}.pdf", mime="application/pdf", type="primary", key="ode_redl_btn")
+
+                else:
+                    stu_res = supabase.table("master_students").select("*").eq("usn", ode_usn).execute()
+                    if not stu_res.data:
+                        st.error("Student not found.")
+                    else:
+                        student = stu_res.data[0]
+                        student_scheme = int(student.get('scheme_batch', 25))
+
+                        if str(student.get('status', '')).strip().upper() == 'DISCONTINUED':
+                            st.error(f"❌ **Registration Blocked:** Student '{ode_usn}' is marked as DISCONTINUED.")
+                        else:
+                            branch_code = student.get('branch_code', '')
+                            br_res = supabase.table("master_branches").select("program_type").eq("branch_code", branch_code).execute()
+                            prog_type = br_res.data[0]['program_type'] if br_res.data else "UG"
+
+                            if target_ode_cycle.get('program_type', 'BOTH') not in ['BOTH', prog_type]:
+                                st.error(f"❌ **Program Mismatch:** Student is {prog_type}, but cycle restricted to {target_ode_cycle.get('program_type')}.")
+                            else:
+                                st.success(f"**{student['full_name']}** | Branch: **{branch_code}** ({prog_type}) | Sem: **{student.get('current_sem')}** | Status: **{student.get('status')}**")
+
+                                # 1. Fetch all historical results to find unpassed subjects
+                                res = supabase.table("student_results").select("course_code, grade, cie_marks, is_pass, cycle_id").eq("usn", ode_usn).execute()
+                                results = res.data or []
+                                results.sort(key=lambda x: int(x.get('cycle_id') or 0), reverse=True)
+
+                                latest_results = {}
+                                for r in results:
+                                    if r['course_code'] not in latest_results:
+                                        latest_results[r['course_code']] = r
+
+                                # 2. Check previous ODE attempts in course_registrations across prior cycles
+                                past_regs_res = supabase.table("course_registrations").select("course_code, cycle_id, registration_type").eq("usn", ode_usn).execute()
+                                past_ode_counts = defaultdict(int)
+                                for pr in (past_regs_res.data or []):
+                                    pr_cid = pr.get('cycle_id')
+                                    pr_type = str(pr.get('registration_type', '')).strip().upper()
+                                    if pr_cid != target_ode_cycle_id and (pr_type.startswith("ODE") or pr_cid in all_ode_cycle_ids):
+                                        past_ode_counts[pr['course_code']] += 1
+
+                                failed_course_codes = [
+                                    cc for cc, r in latest_results.items()
+                                    if not r.get('is_pass', False) and str(r.get('grade', '')).upper() not in ['PND', 'PENDING', 'FROZEN', '']
+                                ]
+
+                                eligible_ode_courses = []
+                                if failed_course_codes:
+                                    crs_res = supabase.table("master_courses").select("course_code, title, semester_id, credits").in_("course_code", failed_course_codes).execute()
+                                    for c in (crs_res.data or []):
+                                        cc = c['course_code']
+                                        r_info = latest_results.get(cc, {})
+                                        prev_ode_cnt = past_ode_counts.get(cc, 0)
+                                        eligible_ode_courses.append({
+                                            "course_code": cc,
+                                            "course_title": c.get('title', 'Unknown'),
+                                            "semester": c.get('semester_id', 1),
+                                            "credits": float(c.get('credits', 4)),
+                                            "grade": str(r_info.get('grade', 'F')).upper(),
+                                            "prev_ode_attempts": prev_ode_cnt
+                                        })
+
+                                if not eligible_ode_courses:
+                                    st.success("🎉 This student has no failed courses requiring On-Demand Examination (ODE) registration!")
+                                else:
+                                    st.markdown("### Select ODE Courses & Verify Attempt Number")
+                                    selected_ode_courses = []
+
+                                    for crs in sort_courses_by_sequence(eligible_ode_courses):
+                                        cc = crs['course_code']
+                                        auto_att_idx = 1 if crs['prev_ode_attempts'] >= 1 else 0
+
+                                        col_chk, col_att = st.columns([3, 2])
+                                        is_checked = col_chk.checkbox(
+                                            f"**[{cc}]** {crs['course_title']} (Sem {crs['semester']} | Prev Grade: {crs['grade']})",
+                                            value=True,
+                                            key=f"ode_chk_{cc}"
+                                        )
+                                        chosen_att_label = col_att.selectbox(
+                                            f"ODE Attempt for {cc}",
+                                            options=["Attempt 1 (₹6,000)", "Subsequent Attempt / Attempt 2+ (₹3,000)"],
+                                            index=auto_att_idx,
+                                            label_visibility="collapsed",
+                                            key=f"ode_att_{cc}"
+                                        )
+
+                                        if is_checked:
+                                            att_num = 1 if "Attempt 1" in chosen_att_label else 2
+                                            rule_label = "Attempt 1 (Rs 6000)" if att_num == 1 else "Attempt 2+ (Rs 3000)"
+                                            selected_ode_courses.append({
+                                                **crs,
+                                                "attempt_num": att_num,
+                                                "rule": rule_label
+                                            })
+
+                                    if selected_ode_courses:
+                                        att1_count = sum(1 for c in selected_ode_courses if c['attempt_num'] == 1)
+                                        att2_count = sum(1 for c in selected_ode_courses if c['attempt_num'] > 1)
+                                        total_ode_fee = calculate_ode_fees(selected_ode_courses)
+
+                                        st.divider()
+                                        m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+                                        m_c1.metric(f"Attempt 1 ({att1_count} × ₹6,000)", f"₹ {att1_count * 6000:,.0f}")
+                                        m_c2.metric(f"Attempt 2+ ({att2_count} × ₹3,000)", f"₹ {att2_count * 3000:,.0f}")
+                                        m_c3.metric("App (₹100) + Grade Card (₹600)", "₹ 700")
+                                        m_c4.metric("Total ODE Fee Payable", f"₹ {total_ode_fee:,.0f}")
+
+                                        st.markdown("### Payment Details")
+                                        ode_target_utr = st.text_input("Transaction ID / UTR (Optional)", help="Leave blank to write manually on printed form.", key="ode_target_utr")
+
+                                        if st.button("💾 Submit ODE Registration & Generate PDF", type="primary", key="ode_reg_btn"):
+                                            payload_staging = [
+                                                {
+                                                    "cycle_id": target_ode_cycle_id,
+                                                    "usn": ode_usn,
+                                                    "course_code": c['course_code'],
+                                                    "semester": c['semester'],
+                                                    "academic_year": target_ode_ay,
+                                                    "semester_type": "ODE",
+                                                    "registration_type": "ODE",
+                                                    "rule_category": c['rule'],
+                                                    "fee_amount": total_ode_fee,
+                                                    "payment_status": "PAID",
+                                                    "utr_number": ode_target_utr.strip()
+                                                }
+                                                for c in selected_ode_courses
+                                            ]
+                                            payload_official = [
+                                                {
+                                                    "cycle_id": target_ode_cycle_id,
+                                                    "usn": ode_usn,
+                                                    "course_code": c['course_code'],
+                                                    "semester": c['semester'],
+                                                    "academic_year": target_ode_ay,
+                                                    "semester_type": "ODE",
+                                                    "registration_type": "ODE_1" if c['attempt_num'] == 1 else "ODE_2"
+                                                }
+                                                for c in selected_ode_courses
+                                            ]
+                                            app_payload = {
+                                                "app_id": str(hashlib.md5(f"{ode_usn}{target_ode_cycle_id}".encode()).hexdigest()[:8]),
+                                                "cycle_id": target_ode_cycle_id,
+                                                "usn": ode_usn,
+                                                "total_fee": total_ode_fee,
+                                                "payment_status": "PAID",
+                                                "utr_number": ode_target_utr.strip() if ode_target_utr.strip() else "ODE-PAID"
+                                            }
+
+                                            try:
+                                                supabase.table("course_registration_online").delete().eq("cycle_id", target_ode_cycle_id).eq("usn", ode_usn).execute()
+                                                supabase.table("course_registrations").delete().eq("cycle_id", target_ode_cycle_id).eq("usn", ode_usn).execute()
+                                                supabase.table("exam_applications").delete().eq("cycle_id", target_ode_cycle_id).eq("usn", ode_usn).execute()
+
+                                                supabase.table("course_registration_online").insert(payload_staging).execute()
+                                                supabase.table("course_registrations").insert(payload_official).execute()
+                                                supabase.table("exam_applications").insert(app_payload).execute()
+
+                                                st.success("✅ ODE Application successfully registered and sent directly to the COE!")
+                                                pdf_bytes = generate_summer_pdf(student, selected_ode_courses, total_ode_fee, ode_target_utr, academic_year=target_ode_ay, exam_type="ODE")
+                                                st.download_button("🖨️ Download Official ODE Application PDF", data=pdf_bytes, file_name=f"ODE_Application_{ode_usn}.pdf", mime="application/pdf", type="primary", key="ode_pdf_dl")
+                                            except Exception as e:
+                                                st.error(f"Database Error: {e}")
+
+    # ---------------------------------------------------------
+    # TAB 5: REPORTS (SUMMER & ODE FEE REPORTS)
+    # ---------------------------------------------------------
+    with tab_reports:
+        st.subheader("📊 Special Cycle Registration & Fee Report (Summer / ODE)")
+        st.info("Download a consolidated list of students who have applied for Summer or On-Demand (ODE) courses through the portal, including their fee amounts and transaction IDs.")
+        
+        try:
+            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type").execute()
+            special_cycles = [
+                c for c in (cycles_res.data or [])
+                if str(c.get('exam_type', '')).strip().upper() in ['SUMMER', 'ODE']
+                or 'SUMMER' in str(c.get('cycle_name', '')).upper()
+                or 'ODE' in str(c.get('cycle_name', '')).upper()
+                or 'ON-DEMAND' in str(c.get('cycle_name', '')).upper()
+            ]
+        except:
+            special_cycles = []
+            
+        if not special_cycles:
+            st.warning("No Summer or ODE Exam Cycles found in the database.")
+        else:
+            try:
+                branches_data = supabase.table("master_branches").select("branch_code").execute().data
+                branch_list = [b['branch_code'] for b in branches_data if str(b['branch_code']).upper() != 'COMMON']
+            except: 
+                branch_list = []
+                
+            col_r1, col_r2 = st.columns(2)
+            cycle_opts = {c['cycle_name']: c['cycle_id'] for c in special_cycles}
+            sel_cycle_name = col_r1.selectbox("Select Target Exam Cycle:", list(cycle_opts.keys()), key="dept_rep_cycle")
+            sel_branch = col_r2.selectbox("Filter by Branch:", ["-- All Branches --"] + branch_list, key="dept_rep_branch")
+            
+            if st.button("📥 Generate Department Report", type="primary", key="dept_rep_btn"):
+                with st.spinner("Compiling fee collection data..."):
+                    df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name], branch_code=sel_branch if sel_branch != "-- All Branches --" else None)
+                    
+                    if df_report is not None and not df_report.empty:
+                        st.success(f"✅ Found {len(df_report)} student records.")
+                        st.dataframe(df_report, use_container_width=True, hide_index=True)
+                        
+                        csv_data = df_report.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="⬇️ Download CSV Report", 
+                            data=csv_data, 
+                            file_name=f"Special_Cycle_Fee_Report_{sel_branch}_{sel_cycle_name}.csv", 
+                            mime="text/csv",
+                            type="primary",
+                            key="dept_rep_dl"
+                        )
+                    else:
+                        st.warning("No online registrations found for the selected criteria.")
+
+# ==========================================
+# VIEW 3: ADMIN DASHBOARD (SCRUTINY & EXPORT)
+# ==========================================
+def admin_dashboard():
+    st.title("📊 Admin Consolidation Panel")
+    tab1, tab2, tab3 = st.tabs(["📥 Download Cash Book", "👥 Manage Users", "☀️ Summer & ODE Fee Reports"])
+    
+    with tab1:
+        c1, c2 = st.columns(2)
+        start_date = c1.date_input("From Date", date.today().replace(day=1))
+        end_date = c2.date_input("To Date", date.today())
+        if st.button("Fetch Data", key="admin_fetch"):
+            res = supabase.table("cash_receipts").select("*").gte("payment_date", str(start_date)).lte("payment_date", str(end_date)).execute()
+            if res.data:
+                df = pd.DataFrame(res.data)
+                st.dataframe(df, use_container_width=True)
+                st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode('utf-8'), f"CashBook_{start_date}_to_{end_date}.csv", "text/csv", key="admin_dl_cb")
+            else: st.info("No records found.")
+            
+    with tab2:
+        with st.form("create_user_form"):
+            new_user = st.text_input("New Username")
+            new_pass = st.text_input("Temporary Password", type="password")
+            new_role = st.selectbox("Role", ["clerk", "department", "admin"])
+            if st.form_submit_button("Create User") and new_user and new_pass:
+                try:
+                    supabase.table("app_users").insert({"username": new_user.lower(), "password_hash": hash_password(new_pass), "role": new_role}).execute()
+                    st.success(f"User created with '{new_role}' role.")
+                except: st.error("Error creating user.")
+                
+    with tab3:
+        st.subheader("Download Institutional Summer & ODE Fee Report")
+        st.info("Generates a master list of all Summer or On-Demand (ODE) registrations across all branches.")
+        try:
+            cycles_res = supabase.table("exam_cycles").select("cycle_id, cycle_name, exam_type").execute()
+            special_cycles = [
+                c for c in (cycles_res.data or [])
+                if str(c.get('exam_type', '')).strip().upper() in ['SUMMER', 'ODE']
+                or 'SUMMER' in str(c.get('cycle_name', '')).upper()
+                or 'ODE' in str(c.get('cycle_name', '')).upper()
+                or 'ON-DEMAND' in str(c.get('cycle_name', '')).upper()
+            ]
+        except:
+            special_cycles = []
+            
+        if not special_cycles:
+            st.warning("No Summer or ODE Exam Cycles found in the database.")
+        else:
+            cycle_opts = {c['cycle_name']: c['cycle_id'] for c in special_cycles}
+            sel_cycle_name = st.selectbox("Select Special Cycle:", list(cycle_opts.keys()), key="admin_rep_cycle")
+            
+            if st.button("📥 Generate Institutional Report", type="primary", key="admin_rep_btn"):
+                with st.spinner("Compiling institutional fee collection data..."):
+                    df_report = generate_summer_fee_report(cycle_opts[sel_cycle_name])
+                    
+                    if df_report is not None and not df_report.empty:
+                        df_report["Total Fee Payable (Rs)"] = pd.to_numeric(df_report["Total Fee Payable (Rs)"], errors="coerce").fillna(0)
+                        total_collected = df_report["Total Fee Payable (Rs)"].sum()
+                        
+                        c1, c2 = st.columns(2)
+                        c1.metric("Total Students Registered", len(df_report))
+                        c2.metric("Estimated Fee Collection", f"₹ {total_collected:,.2f}")
+                        
+                        st.dataframe(df_report, use_container_width=True, hide_index=True)
+                        
+                        csv_data = df_report.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="⬇️ Download Full Report (CSV)", 
+                            data=csv_data, 
+                            file_name=f"Institutional_Special_Fees_{sel_cycle_name}.csv", 
+                            mime="text/csv",
+                            type="primary",
+                            key="admin_rep_dl"
+                        )
+                    else:
+                        st.warning("No online registrations found for this cycle.")
+
+# ==========================================
+# MAIN ROUTING LOGIC
+# ==========================================
+def main():
+    if st.session_state.logged_in:
+        with st.sidebar:
+            st.markdown(f"**User:** {st.session_state.username}")
+            st.markdown(f"**Role:** {st.session_state.role.capitalize()}")
+            if st.button("Logout", use_container_width=True, key="sidebar_logout"):
+                st.session_state.logged_in = False
+                st.session_state.username = ''
+                st.session_state.role = ''
+                st.rerun()
+                
+    if not st.session_state.logged_in:
+        login_screen()
+    else:
+        role = st.session_state.role.lower()
+        if role == 'admin': admin_dashboard()
+        elif role == 'clerk': clerk_dashboard()
+        elif role == 'department': department_dashboard()
+
+if __name__ == "__main__":
+    main()
