@@ -138,6 +138,18 @@ def match_specialization(course_spec, student_spec):
     c_spec = str(course_spec).strip().upper()
     return c_spec in ['GENERAL', 'NONE', 'NAN', '', 'NULL'] or c_spec == student_spec
 
+def detect_cycle_term(cycle_dict, fallback_term="ODD"):
+    """Detects ODD or EVEN parity from the exam cycle metadata or name."""
+    sem_type = str(cycle_dict.get('semester_type', '') or '').strip().upper()
+    if sem_type in ['ODD', 'EVEN']:
+        return sem_type
+    c_name = str(cycle_dict.get('cycle_name', '') or '').upper()
+    if re.search(r'\bEVEN\b', c_name):
+        return 'EVEN'
+    if re.search(r'\bODD\b', c_name):
+        return 'ODD'
+    return fallback_term.upper()
+
 def generate_summer_fee_report(cycle_id, branch_code=None):
     regs_res = supabase.table("course_registration_online").select("*").eq("cycle_id", cycle_id).execute()
     if not regs_res.data: return None
@@ -400,10 +412,8 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
     for i in range(0, total, BATCH_SIZE):
         batch_items = student_course_list[i : i + BATCH_SIZE]
         
-        # We need the usn directly from the student record to fallback appropriately
         batch_usns = []
         for item in batch_items:
-            # Prefer official USN in bulk rendering; download logic will fallback anyway
             u = item['student'].get('usn')
             if pd.isna(u) or u == '': u = item['student'].get('admission_number')
             batch_usns.append(u)
@@ -466,7 +476,6 @@ def generate_regular_pdf_bulk(student_course_list, academic_year="2026-27", term
             p_style.alignment = 1 
             p_style.fontSize = 8
             
-            # Fallback locally if batch_photos missed due to admission_number mapping
             photo_io = batch_photos.get(display_id)
             if not photo_io:
                 photo_io = get_student_photo(display_id, student.get('admission_number'))
@@ -923,7 +932,7 @@ def department_dashboard():
     ])
     
     # ---------------------------------------------------------
-    # TAB 1: REGULAR COURSE REGISTRATION (FULL FEATURES FROM brs10)
+    # TAB 1: REGULAR COURSE REGISTRATION (FULL FEATURES + ONLINE)
     # ---------------------------------------------------------
     with tab_reg:
         st.info(f"📅 **Active Academic Term:** {active_ay} | **{active_term}** Semester")
@@ -999,7 +1008,7 @@ def department_dashboard():
                                 courses_res = supabase.table("master_courses").select("*").execute()
                                 all_courses = courses_res.data if courses_res.data else []
                                 
-                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR'] and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
+                                core_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR', 'ONLINE'] and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
                                 lateral_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type', 'CORE') == 'LATERAL' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
                                 
                                 pe_courses = [c for c in all_courses if c.get('semester_id') == current_sem and branch_match(c.get('branch_code', ''), branch_code) and c.get('course_type') == 'PE' and int(c.get('scheme_batch', 25)) == student_scheme and match_specialization(c.get('specialization'), stu_spec)]
@@ -1007,7 +1016,7 @@ def department_dashboard():
                                 
                                 selected_codes, total_credits = [], 0.0
                                 
-                                st.markdown("### 1. Mandatory Core, Lab, Project, OMR & Non-Credit Courses")
+                                st.markdown("### 1. Mandatory Core, Lab, Project, OMR, Online & Non-Credit Courses")
                                 if not core_courses:
                                     st.warning("No core courses found for this semester.")
                                 for core in core_courses:
@@ -1127,7 +1136,7 @@ def department_dashboard():
                         courses_res = supabase.table("master_courses").select("*").eq("semester_id", str(b_sem)).eq("scheme_batch", str(b_scheme)).execute()
                         all_courses = courses_res.data if courses_res.data else []
                         
-                        all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR']]
+                        all_core_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') in ['CORE', 'LAB', 'NON CREDIT', 'PROJECT', 'OMR', 'ONLINE']]
                         all_lateral_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type', 'CORE') == 'LATERAL']
                         
                         pe_courses = [c for c in all_courses if branch_match(c.get('branch_code', ''), b_branch) and c.get('course_type') == 'PE']
@@ -1312,27 +1321,36 @@ def department_dashboard():
                                         st.download_button("📥 Download Master PDF (All CSV Students)", data=pdf_bytes, file_name=f"Bulk_Applications_{b_branch}_{pdf_suffix}_CSV.pdf", mime="application/pdf", type="primary", key="bulk_csv_dl")
 
     # ---------------------------------------------------------
-    # TAB 2: EXAM APPLICATIONS (FROM brs11)
+    # TAB 2: EXAM APPLICATIONS (PRE-EXAM ELIGIBILITY & ARREARS)
     # ---------------------------------------------------------
     with tab_app:
         try:
-            cycles_res = supabase.table("exam_cycles").select("*").eq("is_active", True).eq("is_brs_active", True).execute()
-            active_cycles = [c for c in (cycles_res.data or []) if str(c.get('exam_type', '')).strip().upper() != 'SUMMER']
-        except:
+            # 🟢 Fetch all cycles and accept any non-Summer cycle where is_active OR is_brs_active is True
+            cycles_res = supabase.table("exam_cycles").select("*").execute()
+            all_cycles_data = cycles_res.data or []
+            active_cycles = [
+                c for c in all_cycles_data
+                if (bool(c.get('is_active')) or bool(c.get('is_brs_active')))
+                and str(c.get('exam_type', '') or '').strip().upper() != 'SUMMER'
+                and 'SUMMER' not in str(c.get('cycle_name', '') or '').upper()
+            ]
+        except Exception as e:
+            st.error(f"Error loading exam cycles: {e}")
             active_cycles = []
         
         if not active_cycles:
-            st.warning("No Regular Exam Cycles are currently open for applications.")
+            st.warning("No Regular Exam Cycles are currently open for applications. Please ensure at least one Regular cycle is marked Active in Exam Management.")
         else:
             c_opts = {c['cycle_name']: c for c in active_cycles}
             sel_cycle_name = st.selectbox("Select Target Exam Cycle:", list(c_opts.keys()), key="exam_cycle_sel")
             target_cycle = c_opts[sel_cycle_name]
             target_cycle_id = target_cycle['cycle_id']
             
-            # 🟢 Determine Cycle Parity (1 for ODD, 0 for EVEN)
-            cycle_parity = 1 if active_term.upper() == 'ODD' else 0
+            # 🟢 Smart Cycle Parity Detection (reads ODD/EVEN from selected cycle name/metadata first)
+            cycle_term = detect_cycle_term(target_cycle, fallback_term=active_term)
+            cycle_parity = 1 if cycle_term == 'ODD' else 0
             
-            st.info(f"The Exam Application establishes financial eligibility and locks the student into the **{sel_cycle_name}** cycle.")
+            st.info(f"The Exam Application establishes financial eligibility and locks the student into the **{sel_cycle_name}** cycle (**{cycle_term}** Parity).")
             
             app_mode = st.radio(
                 "Application Mode:",
@@ -1343,7 +1361,7 @@ def department_dashboard():
             st.divider()
             
             if app_mode == "🚀 Bulk Initialize Regular Exam Applications":
-                st.write("This engine initializes the `exam_applications` row for **ALL** active regular students in the selected branch, saving their Base Exam Fee as Paid. This allows the COE to bulk print their forms so they can manually tick their arrears.")
+                st.write("This engine initializes the `exam_applications` row for **ALL** active regular students in the selected branch, saving their Base Exam Fee as Paid, and links their registered courses to this Exam Cycle so the COE can bulk print their forms.")
                 
                 col_a1, col_a2 = st.columns(2)
                 try:
@@ -1353,24 +1371,44 @@ def department_dashboard():
                     branch_list = []
                 
                 a_branch = col_a1.selectbox("Select Branch:", ["-- Select --"] + branch_list, key="app_branch")
-                a_sem = col_a2.number_input("Target Semester:", min_value=1, max_value=10, value=1, key="app_sem")
+                a_sem = col_a2.number_input("Target Exam Semester:", min_value=1, max_value=10, value=1, key="app_sem")
                 
                 if a_branch != "-- Select --" and st.button("🚀 Bulk Initialize Applications", type="primary", key="bulk_init_app_btn"):
                     with st.spinner("Initializing applications for all active students..."):
                         
-                        # 1. Fetch Active Students
-                        stu_res = supabase.table("master_students").select("usn, status").eq("branch_code", a_branch).eq("current_sem", str(a_sem)).execute()
-                        active_usns = [s['usn'] for s in (stu_res.data or []) if str(s.get('status', 'ACTIVE')).upper() == 'ACTIVE' and s.get('usn')]
+                        # 1. Fetch Active Students in this branch (check both current_sem == a_sem AND students registered in course_registrations for a_sem)
+                        stu_res = supabase.table("master_students").select("usn, admission_number, status, current_sem").eq("branch_code", a_branch).execute()
+                        branch_active_students = [
+                            s for s in (stu_res.data or [])
+                            if str(s.get('status', 'ACTIVE')).strip().upper() == 'ACTIVE'
+                        ]
                         
-                        if not active_usns:
-                            st.error("No active students found in this branch/semester.")
+                        branch_ids = [
+                            (s.get('usn') if pd.notna(s.get('usn')) and str(s.get('usn')).strip() != '' else s.get('admission_number'))
+                            for s in branch_active_students
+                        ]
+                        branch_ids = [u for u in branch_ids if u]
+                        
+                        if not branch_ids:
+                            st.error("No active students found in this branch.")
                         else:
-                            # 2. Check who registered for regular courses
-                            regs_res = supabase.table("course_registrations").select("usn").eq("academic_year", active_ay).eq("semester_type", active_term).in_("usn", active_usns).execute()
-                            registered_usns = list(set([r['usn'] for r in (regs_res.data or [])]))
+                            # 2. Check who has course registrations for this semester OR this cycle_id
+                            reg_rows = []
+                            for i in range(0, len(branch_ids), 200):
+                                chunk = branch_ids[i:i+200]
+                                r_res = supabase.table("course_registrations").select("reg_id, usn, semester, cycle_id, registration_type").in_("usn", chunk).execute()
+                                if r_res.data:
+                                    reg_rows.extend(r_res.data)
+                                    
+                            matching_regs = [
+                                r for r in reg_rows
+                                if (str(r.get('semester', '')) == str(a_sem) or r.get('cycle_id') == target_cycle_id)
+                                and str(r.get('registration_type', 'REGULAR')).upper() != 'ARREAR'
+                            ]
+                            registered_usns = sorted(list(set([r['usn'] for r in matching_regs if r.get('usn')])))
                             
                             if not registered_usns:
-                                st.warning("None of these students have course registrations for the active term yet. Please complete Phase 1 first.")
+                                st.warning(f"No course registrations found for {a_branch} Semester {a_sem}. Please complete Phase 1 Course Registration first.")
                             else:
                                 try:
                                     fee_res = supabase.table("master_fees").select("amount").eq("fee_type", "Exam").execute()
@@ -1390,12 +1428,17 @@ def department_dashboard():
                                     })
                                 
                                 try:
+                                    # Stamp cycle_id on their regular course_registrations so coe_control.py finds them
+                                    for i in range(0, len(registered_usns), 200):
+                                        chunk_u = registered_usns[i:i+200]
+                                        supabase.table("course_registrations").update({"cycle_id": target_cycle_id}).eq("semester", a_sem).in_("usn", chunk_u).execute()
+                                    
                                     for i in range(0, len(registered_usns), 200):
                                         supabase.table("exam_applications").delete().eq("cycle_id", target_cycle_id).in_("usn", registered_usns[i:i+200]).execute()
                                     for i in range(0, len(payload), 500):
                                         supabase.table("exam_applications").insert(payload[i:i+500]).execute()
                                         
-                                    st.success(f"✅ Success! Base Applications generated for {len(registered_usns)} students. The COE can now bulk print their forms.")
+                                    st.success(f"✅ Success! Base Applications generated and linked to **{sel_cycle_name}** for **{len(registered_usns)}** students. The COE can now bulk print their forms.")
                                 except Exception as e:
                                     st.error(f"Error initializing applications: {e}")
 
@@ -1406,48 +1449,72 @@ def department_dashboard():
                 if app_usn:
                     stu_res = supabase.table("master_students").select("*").eq("usn", app_usn).execute()
                     if not stu_res.data:
+                        stu_res = supabase.table("master_students").select("*").eq("admission_number", app_usn).execute()
+                        
+                    if not stu_res.data:
                         st.error("Student not found.")
                     else:
                         student = stu_res.data[0]
+                        stu_id = student.get('usn') or student.get('admission_number')
                         st.success(f"**{student['full_name']}** | Branch: {student['branch_code']} | Sem: {student['current_sem']} | Status: {student['status']}")
                         
                         # Fetch Regular Courses (if they are ACTIVE)
                         regular_courses = []
                         if str(student['status']).upper() == 'ACTIVE':
-                            regs_res = supabase.table("course_registrations").select("course_code").eq("academic_year", active_ay).eq("semester_type", active_term).eq("usn", app_usn).execute()
-                            regular_courses = [r['course_code'] for r in (regs_res.data or [])]
+                            regs_res = supabase.table("course_registrations").select("course_code, cycle_id, academic_year, semester_type, registration_type").eq("usn", stu_id).execute()
+                            for r in (regs_res.data or []):
+                                if str(r.get('registration_type', 'REGULAR')).upper() == 'REGULAR':
+                                    if r.get('cycle_id') == target_cycle_id or (r.get('academic_year') == active_ay and str(r.get('semester_type', '')).upper() == cycle_term):
+                                        regular_courses.append(r['course_code'])
+                            regular_courses = sorted(list(set(regular_courses)))
                         
-                        # 🟢 ODD/EVEN Parity Arrear Filtering
-                        results_res = supabase.table("student_results").select("course_code, grade, is_pass").eq("usn", app_usn).execute()
-                        failed_codes = [r['course_code'] for r in (results_res.data or []) if r.get('is_pass') == False or str(r.get('grade')).strip().upper() in ['F', 'AB', 'MP', 'NP', 'WH']]
+                        # 🟢 ODD/EVEN Parity Arrear Filtering (latest attempt per course)
+                        results_res = supabase.table("student_results").select("course_code, grade, is_pass, cycle_id").eq("usn", stu_id).execute()
+                        raw_results = results_res.data or []
+                        raw_results.sort(key=lambda x: int(x.get('cycle_id') or 0), reverse=True)
+                        
+                        latest_res = {}
+                        for r in raw_results:
+                            cc = r.get('course_code')
+                            if cc and cc not in latest_res:
+                                latest_res[cc] = r
+                                
+                        failed_codes = [
+                            cc for cc, r in latest_res.items()
+                            if r.get('is_pass') == False or str(r.get('grade', '')).strip().upper() in ['F', 'AB', 'MP', 'NP', 'WH', 'NE']
+                        ]
                         
                         eligible_arrears = []
                         if failed_codes:
                             crs_res = supabase.table("master_courses").select("course_code, title, semester_id").in_("course_code", list(set(failed_codes))).execute()
                             for c in (crs_res.data or []):
-                                c_sem = int(c.get('semester_id', 0))
-                                # Only show arrears matching the current cycle's parity
-                                if (c_sem % 2) == cycle_parity:
-                                    eligible_arrears.append(c)
+                                try:
+                                    c_sem = int(c.get('semester_id', 0))
+                                    if (c_sem % 2) == cycle_parity:
+                                        eligible_arrears.append(c)
+                                except:
+                                    pass
                         
                         st.markdown("### 1. Mandatory Regular Courses")
                         if not regular_courses:
                             if str(student['status']).upper() == 'DETAINED':
                                 st.info("Student is DETAINED. They are only eligible to write arrears.")
                             else:
-                                st.warning("This student is not registered for any regular courses this term.")
+                                st.warning("No regular courses linked to this cycle/term for this student.")
                         else:
                             for c in regular_courses:
                                 st.markdown(f"- ✅ **{c}** *(Locked - Regular Semester)*")
                                 
-                        st.markdown(f"### 2. Select Eligible {active_term} Arrears")
+                        st.markdown(f"### 2. Select Eligible {cycle_term} Semester Arrears")
                         if not eligible_arrears:
-                            st.success(f"🎉 This student has no active backlogs for {active_term} semesters.")
+                            st.success(f"🎉 This student has no active backlogs for {cycle_term} semesters.")
                         else:
                             selected_arrear_codes = []
+                            selected_arrear_objs = []
                             for c in eligible_arrears:
                                 if st.checkbox(f"Add Arrear: {c['course_code']} - {c['title']} (Sem {c['semester_id']})", key=f"arr_{c['course_code']}"):
                                     selected_arrear_codes.append(c['course_code'])
+                                    selected_arrear_objs.append(c)
                                     
                             try:
                                 fee_res = supabase.table("master_fees").select("*").execute()
@@ -1455,8 +1522,8 @@ def department_dashboard():
                             except:
                                 fees = {'Exam': 2000, 'Arrear': 500}
                                 
-                            # If detained, they only pay Arrear fees. If active, they pay Base + Arrears.
-                            base = fees.get('Exam', 2000) if str(student['status']).upper() == 'ACTIVE' else 0
+                            # If detained or no regular courses, they only pay Arrear fees. If active with regular courses, they pay Base + Arrears.
+                            base = fees.get('Exam', 2000) if (str(student['status']).upper() == 'ACTIVE' and len(regular_courses) > 0) else 0
                             total_fee = base + (len(selected_arrear_codes) * fees.get('Arrear', 500))
                             
                             st.info(f"💰 **Calculated Application Fee:** ₹{total_fee}")
@@ -1465,28 +1532,29 @@ def department_dashboard():
                             
                             if st.button("💾 Submit & Lock Arrears", type="primary", key="arr_submit_btn"):
                                 try:
-                                    supabase.table("exam_applications").delete().eq("cycle_id", target_cycle_id).eq("usn", app_usn).execute()
+                                    supabase.table("exam_applications").delete().eq("cycle_id", target_cycle_id).eq("usn", stu_id).execute()
                                     
                                     app_payload = {
-                                        "app_id": str(hashlib.md5(f"{app_usn}{target_cycle_id}".encode()).hexdigest()[:8]),
+                                        "app_id": str(hashlib.md5(f"{stu_id}{target_cycle_id}".encode()).hexdigest()[:8]),
                                         "cycle_id": target_cycle_id,
-                                        "usn": app_usn,
+                                        "usn": stu_id,
                                         "total_fee": total_fee,
                                         "payment_status": "PAID",
                                         "utr_number": utr.strip() if utr.strip() else "PAID-MANUAL"
                                     }
                                     supabase.table("exam_applications").insert(app_payload).execute()
                                     
-                                    if selected_arrear_codes:
-                                        supabase.table("course_registrations").delete().eq("cycle_id", target_cycle_id).eq("registration_type", "ARREAR").eq("usn", app_usn).execute()
-                                        
+                                    supabase.table("course_registrations").delete().eq("cycle_id", target_cycle_id).eq("registration_type", "ARREAR").eq("usn", stu_id).execute()
+                                    
+                                    if selected_arrear_objs:
                                         arr_payload = []
-                                        for cc in selected_arrear_codes:
+                                        for c_obj in selected_arrear_objs:
                                             arr_payload.append({
-                                                "usn": app_usn,
-                                                "course_code": cc,
-                                                "academic_year": active_ay,
-                                                "semester_type": active_term,
+                                                "usn": stu_id,
+                                                "course_code": c_obj['course_code'],
+                                                "semester": int(c_obj.get('semester_id', 1)),
+                                                "academic_year": target_cycle.get('academic_year', active_ay),
+                                                "semester_type": cycle_term,
                                                 "cycle_id": target_cycle_id,
                                                 "registration_type": "ARREAR"
                                             })
